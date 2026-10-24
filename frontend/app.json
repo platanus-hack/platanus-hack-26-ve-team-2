@@ -22,7 +22,13 @@
       "predictiveBackGestureEnabled": false,
       "package": "com.platanushack.ar",
       "permissions": [
-        "android.permission.HIGH_SAMPLING_RATE_SENSORS"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.HIGH_SAMPLING_RATE_SENSORS",
+        "android.permission.INTERNET"
       ]
     },
     "web": {
@@ -64,6 +70,15 @@
         {
           "microphonePermission": "Usamos el micrófono para que puedas hacerle preguntas a los personajes históricos.",
           "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Usamos la cámara para mostrar la experiencia de realidad aumentada.",
+          "microphonePermission": "Usamos el micrófono para que puedas hacerle preguntas a los personajes históricos.",
+          "recordAudioAndroid": true,
+          "barcodeScannerEnabled": false
         }
       ]
     ],

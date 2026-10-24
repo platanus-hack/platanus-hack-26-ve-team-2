@@ -2,6 +2,8 @@ import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "
 import { useCallback, useEffect, useState } from "react";
 import { AppState, Linking } from "react-native";
 
+import { requestStartupPermissions } from "./useStartupPermissions";
+
 /**
  * - checking: consultando el estado inicial
  * - granted: se puede grabar
@@ -23,6 +25,7 @@ export function useMicrophonePermission() {
     let cancelled = false;
 
     (async () => {
+      await requestStartupPermissions();
       const current = await getRecordingPermissionsAsync();
       const result = current.granted || !current.canAskAgain ? current : await requestRecordingPermissionsAsync();
       if (!cancelled) setStatus(toState(result));

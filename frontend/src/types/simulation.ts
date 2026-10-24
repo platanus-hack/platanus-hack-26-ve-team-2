@@ -28,6 +28,16 @@ export interface DynamicSceneObject extends BaseSceneObject {
   animation?: string;
   /** Si conversa por voz, id del personaje en personas.yaml */
   characterId?: string;
+  /** Si llega caminando: sale de `from` y avanza en línea recta hasta `transform.position` */
+  entrance?: Entrance;
+}
+
+export interface Entrance {
+  /** Punto de partida (solo cuentan X y Z: camina sobre el piso) */
+  from: Vec3;
+  durationMs: number;
+  /** Animación del modelo mientras camina; sin ella el modelo se desliza */
+  walkAnimation?: string;
 }
 
 export type SceneObject = StaticSceneObject | DynamicSceneObject;
