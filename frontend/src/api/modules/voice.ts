@@ -2,6 +2,7 @@ import { Environment } from "@/config/environment";
 import type { AudioFile, SessionCreate, Turn, VoiceLocation, VoiceSession } from "@/types/voice";
 
 import { http } from "../client";
+import { toFormDataFile } from "../upload";
 
 // STT + LLM + TTS en un solo request: más lento que el resto de la API
 const TURN_TIMEOUT_MS = 60_000;
@@ -17,8 +18,7 @@ export const VoiceModule = {
   sendTurn: (sessionId: string, input: { audio: AudioFile } | { text: string }) => {
     const form = new FormData();
     if ("audio" in input) {
-      // React Native acepta { uri, name, type } como archivo en FormData
-      form.append("audio", input.audio as unknown as Blob);
+      form.append("audio", toFormDataFile(input.audio));
     } else {
       form.append("text", input.text);
     }

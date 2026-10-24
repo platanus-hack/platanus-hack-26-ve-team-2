@@ -105,12 +105,32 @@ def _session_or_404(service: ConversationService, session_id: str) -> VoiceSessi
     return session
 
 
-def _normalize_mime(mime: str | None) -> str:
-    """'audio/webm;codecs=opus' -> 'audio/webm'. Lanza si no es un formato de audio admitido."""
+# Cada SO deduce el MIME a su manera (o lo omite): la extensión es el respaldo.
+_MIME_BY_EXTENSION = {
+    "m4a": "audio/mp4",
+    "mp4": "audio/mp4",
+    "aac": "audio/aac",
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "webm": "audio/webm",
+    "ogg": "audio/ogg",
+    "3gp": "audio/3gpp",
+    "flac": "audio/flac",
+}
+
+
+def _normalize_mime(mime: str | None, filename: str | None = None) -> str:
+    """'audio/webm;codecs=opus' -> 'audio/webm'. Sin MIME útil, lo infiere de la extensión.
+
+    Lanza si no es un formato de audio admitido.
+    """
     base = (mime or "").split(";")[0].strip().lower()
-    if base not in ALLOWED_AUDIO_MIME:
-        raise InvalidInputError(f"Formato de audio no admitido: {base or 'desconocido'}")
-    return base
+    if base in ALLOWED_AUDIO_MIME:
+        return base
+    ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+    if ext in _MIME_BY_EXTENSION:
+        return _MIME_BY_EXTENSION[ext]
+    raise InvalidInputError(f"Formato de audio no admitido: {base or 'desconocido'}")
 
 
 # ---------- REST ----------
@@ -150,7 +170,8 @@ async def read_audio(upload: UploadFile, service: ConversationService) -> AudioI
     data = await upload.read(limit + 1)
     if len(data) > limit:
         raise InvalidInputError(f"Audio demasiado grande (máx. {limit // 1024} KB)")
-    return AudioInput(data, _normalize_mime(upload.content_type), upload.filename or "audio")
+    mime = _normalize_mime(upload.content_type, upload.filename)
+    return AudioInput(data, mime, upload.filename or "audio")
 
 
 async def collect_turn(

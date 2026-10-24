@@ -1,6 +1,7 @@
 import type { AudioFile, SimulationTurn } from "@/types/voice";
 
 import { http } from "../client";
+import { toFormDataFile } from "../upload";
 
 // STT + LLM + TTS en un solo request
 const ASK_TIMEOUT_MS = 60_000;
@@ -12,8 +13,7 @@ export const SimulationsModule = {
    */
   ask: (simulationId: string, audio: AudioFile, sessionId?: string | null) => {
     const form = new FormData();
-    // React Native acepta { uri, name, type } como archivo en FormData
-    form.append("audio", audio as unknown as Blob);
+    form.append("audio", toFormDataFile(audio));
     if (sessionId) form.append("session_id", sessionId);
     return http.post<SimulationTurn>(`/simulations/${encodeURIComponent(simulationId)}/ask`, form, {
       timeoutMs: ASK_TIMEOUT_MS,

@@ -51,6 +51,14 @@ def test_ask_errors(client):
     assert bad_mime.status_code == 422
 
 
+def test_ask_infers_mime_from_extension_when_missing(client):
+    # expo-file-system puede enviar el archivo sin content-type útil
+    for mime in ("application/octet-stream", ""):
+        files = {"audio": ("recording-123.m4a", b"fake-m4a", mime)}
+        res = client.post("/simulations/carabobo_prueba/ask", files=files)
+        assert res.status_code == 200, (mime, res.text)
+
+
 def test_cubo_negro_is_a_circle_around_the_building():
     region = shape({"type": "Polygon", "coordinates": [list(r) for r in CUBO_NEGRO.rings]})
     center = Point(CUBO_NEGRO_CENTER)
