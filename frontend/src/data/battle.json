@@ -1,6 +1,6 @@
 {
   "animation": "batalla",
-  "durationMs": 14000,
+  "durationMs": 20000,
   "cues": [
     {
       "atMs": 0,
@@ -35,27 +35,63 @@
       "sound": "clash"
     },
     {
-      "atMs": 5000,
+      "atMs": 5850,
+      "sound": "clash"
+    },
+    {
+      "atMs": 6500,
       "sound": "clash_heavy"
     },
     {
-      "atMs": 5750,
-      "sound": "push"
+      "atMs": 7050,
+      "sound": "clash"
     },
     {
-      "atMs": 7000,
+      "atMs": 7450,
+      "sound": "clash_2"
+    },
+    {
+      "atMs": 8050,
       "sound": "clash_heavy"
     },
     {
-      "atMs": 7300,
+      "atMs": 8750,
+      "sound": "clash"
+    },
+    {
+      "atMs": 9400,
+      "sound": "clash_2"
+    },
+    {
+      "atMs": 9850,
+      "sound": "clash"
+    },
+    {
+      "atMs": 10300,
+      "sound": "clash_heavy"
+    },
+    {
+      "atMs": 11000,
+      "sound": "clash_heavy"
+    },
+    {
+      "atMs": 11750,
       "sound": "push"
     },
     {
-      "atMs": 8270,
+      "atMs": 13000,
+      "sound": "clash_heavy"
+    },
+    {
+      "atMs": 13300,
+      "sound": "push"
+    },
+    {
+      "atMs": 14270,
       "sound": "fall"
     },
     {
-      "atMs": 11250,
+      "atMs": 17250,
       "sound": "run_away"
     }
   ]

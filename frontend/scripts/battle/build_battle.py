@@ -31,7 +31,12 @@ from rig import FPS, P, SWORD, F, Rig, smooth  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MODELS = os.path.join(ROOT, "assets", "models")
-DURATION = 14.0
+# La coreografía base dura 14 s; en EXCHANGE_AT se intercalan EXCHANGE_LEN s más de esgrima
+# (ver exchange_keys) y todo lo que venía después se corre ese tiempo
+BASE_DURATION = 14.0
+EXCHANGE_AT = 4.9
+EXCHANGE_LEN = 6.0
+DURATION = BASE_DURATION + EXCHANGE_LEN
 ACTION = "batalla"
 HAT_BONE = "Bone_083"  # el bicornio que Monteverde lleva en la mano derecha
 
@@ -286,7 +291,7 @@ RUN_YAW = math.degrees(math.atan2(RUN_DIR.x, -RUN_DIR.y))
 LOOK_AT_ARRIVAL = math.degrees(math.atan2(RUN_FROM.x, -RUN_FROM.y))
 
 # Sonidos (segundos desde que arranca la animación); la app los toma de src/data/battle.json
-CUES = [
+BASE_CUES = [
     (0.0, "run_in"),
     (0.92, "draw"),
     (1.05, "draw"),
@@ -306,11 +311,160 @@ CUES = [
 
 # Golpes que recibe cada uno: el torso cede hacia atrás y vuelve solo (resorte amortiguado).
 # (segundo, velocidad angular en °/s; negativo = hacia atrás)
-BOLIVAR_HITS = [(3.0, -75), (4.15, -60), (5.0, -30), (7.0, -95)]
-MONTEVERDE_HITS = [(3.55, -60), (4.75, -60), (5.0, -30)]
+BASE_BOLIVAR_HITS = [(3.0, -75), (4.15, -60), (5.0, -30), (7.0, -95)]
+BASE_MONTEVERDE_HITS = [(3.55, -60), (4.75, -60), (5.0, -30)]
 # Empujones: (desde, hasta, metros que retrocede)
-MONTEVERDE_STAGGER = (5.75, 6.55, 0.9)
-BOLIVAR_STAGGER = (7.3, 7.95, 0.75)
+BASE_MONTEVERDE_STAGGER = (5.75, 6.55, 0.9)
+BASE_BOLIVAR_STAGGER = (7.3, 7.95, 0.75)
+
+# --- intercambio largo de esgrima (se intercala en EXCHANGE_AT) ------------------------------------
+# Posturas que se repiten, en el marco de quien las hace
+HIGH_BLOCK = dict(rh=("t", F(0.30, -0.10, 1.62)), blade=F(0.15, 1.0, 0.12), edge=F(0, 0, 1))
+LEFT_BLOCK = dict(rh=("t", F(0.35, 0.25, 1.20)), blade=F(0.2, 0.1, 1.0), edge=F(0, 1, 0))
+DIAG_BLOCK = dict(rh=("t", F(0.35, 0.20, 1.30)), blade=F(0.25, 0.15, 0.95), edge=F(0, 1, 0))
+RIGHT_BLOCK = dict(rh=("t", F(0.33, -0.30, 1.20)), blade=F(0.2, -0.1, 1.0), edge=F(0, -1, 0))
+LOW_PARRY = dict(rh=("t", F(0.32, 0.12, 1.05)), blade=F(0.45, 0.05, -0.85), edge=F(1, 0, 0))
+BEAT_PARRY = dict(rh=("t", F(0.35, 0.15, 1.25)), blade=F(0.55, 0.35, 0.75), edge=F(0, 1, 0))
+OVERHEAD_UP = dict(rh=("t", F(0.05, -0.12, 1.82)), blade=F(-0.55, 0.05, 0.83), edge=F(0.83, 0, 0.55), pitch=-6, spine=(-8, 0, 0))
+OVERHEAD_CUT = dict(rh=("t", F(0.45, -0.05, 1.48)), blade=F(0.85, 0.05, 0.4), edge=F(0.4, 0, -0.9), pitch=10, spine=(10, 0, 0))
+DIAG_UP = dict(rh=("t", F(0.05, -0.42, 1.72)), blade=F(-0.2, -0.5, 0.85), edge=F(0.7, 0.5, 0), spine=(-5, -25, 0))
+DIAG_CUT = dict(rh=("t", F(0.42, -0.05, 1.30)), blade=F(0.8, -0.4, 0.1), edge=F(0, 1, 0), spine=(8, 10, 0))
+SIDE_UP = dict(rh=("t", F(0.05, -0.45, 1.25)), blade=F(-0.3, -0.8, 0.5), edge=F(0.6, 0.6, 0), spine=(0, -30, 0))
+SIDE_CUT = dict(rh=("t", F(0.40, -0.12, 1.20)), blade=F(0.95, -0.1, 0.2), edge=F(0, 1, 0), spine=(6, 10, 0))
+BACKHAND_UP = dict(rh=("t", F(0.15, 0.30, 1.55)), blade=F(-0.2, 0.6, 0.75), edge=F(0.7, -0.5, 0), spine=(0, 20, 0))
+BACKHAND_CUT = dict(rh=("t", F(0.42, -0.1, 1.25)), blade=F(0.85, 0.45, 0.1), edge=F(0, -1, 0), spine=(6, -12, 0))
+LOW_UP = dict(rh=("t", F(0.1, -0.4, 1.3)), blade=F(-0.1, -0.7, 0.3), edge=F(0.6, 0.5, 0), spine=(0, -20, 0))
+LOW_CUT = dict(rh=("t", F(0.40, 0.0, 1.0)), blade=F(0.8, -0.3, -0.45), edge=F(0, 1, 0), spine=(12, 10, 0))
+CHAMBER = dict(rh=("t", F(0.15, -0.2, 1.2)), blade=F(0.9, 0.05, 0.2), edge=F(0, 0, -1))
+THRUST = dict(rh=("t", F(0.62, -0.05, 1.3)), blade=F(0.95, 0, 0.1), edge=F(0, 0, -1), pitch=8, dz=-0.15)
+GUARD_POSE = dict(rh=GUARD_HAND, blade=GUARD_BLADE, edge=GUARD_EDGE, lh=GUARD_OFFHAND, pitch=0, spine=(0, 0, 0), dz=-0.07)
+
+
+def at(t: float, *poses: dict, **extra) -> dict:
+    """Key en el tiempo t (relativo al inicio del intercambio) con las posturas combinadas."""
+    out = {}
+    for p in poses:
+        out.update(p)
+    out.update(extra)
+    out["t"] = EXCHANGE_AT + t
+    return out
+
+
+def bolivar_exchange() -> list[dict]:
+    """Bolívar presiona, para la estocada, ataca de arriba, aguanta el doble tajo retrocediendo,
+    contraataca, se tira a fondo, para el tajo bajo y vuelve a cruzar dos veces."""
+    return [
+        at(0.0, GUARD_POSE, x=0.12, feet={"r": F(0.30, -0.09)}),
+        # Avanza dos pasos presionando
+        at(0.4, feet={"r": F(0.45, -0.09)}),
+        at(0.55, feet={"l": F(-0.12, 0.12), "lyaw": 45}),
+        at(0.6, x=0.35),
+        # A) para la estocada de Monteverde
+        at(0.95, BEAT_PARRY, spine=(0, 10, 0), e="in"),
+        at(1.15, GUARD_POSE),
+        # B) tajo de arriba
+        at(1.4, OVERHEAD_UP),
+        at(1.6, OVERHEAD_CUT, x=0.5, feet={"r": F(0.42, -0.09)}, e="in"),
+        at(1.75, rh=("t", F(0.38, -0.1, 1.4)), pitch=4),
+        at(1.9, GUARD_POSE, feet={"r": F(0.30, -0.09)}),
+        # C) aguanta el doble tajo retrocediendo
+        at(2.15, DIAG_BLOCK, spine=(0, 12, 0), e="in"),
+        at(2.35, feet={"l": F(-0.32, 0.12), "lyaw": 45}),
+        at(2.45, x=0.3),
+        at(2.55, RIGHT_BLOCK, spine=(0, -12, 0), e="in"),
+        at(2.6, feet={"r": F(0.28, -0.09)}),
+        at(2.75, GUARD_POSE),
+        # D) contraataque en diagonal
+        at(2.95, DIAG_UP),
+        at(3.15, DIAG_CUT, x=0.45, feet={"r": F(0.45, -0.09)}, e="in"),
+        at(3.35, GUARD_POSE),
+        # E) estocada alta a fondo
+        at(3.6, CHAMBER),
+        at(3.85, THRUST, x=0.6, feet={"r": F(0.55, -0.09)}, e="in"),
+        at(4.05, GUARD_POSE, x=0.45, feet={"r": F(0.32, -0.09)}),
+        # F) para el tajo bajo
+        at(4.5, LOW_PARRY, dz=-0.12, spine=(10, 5, 0), e="in"),
+        at(4.7, GUARD_POSE),
+        # G) tajo horizontal y bloqueo alto
+        at(4.75, SIDE_UP),
+        at(4.95, SIDE_CUT, e="in"),
+        at(5.15, GUARD_POSE),
+        at(5.4, HIGH_BLOCK, dz=-0.13, spine=(-4, 0, 0), e="in"),
+        at(5.55, dz=-0.10),
+        at(5.75, GUARD_POSE, x=0.2, feet={"r": F(0.30, -0.09)}),
+    ]
+
+
+def monteverde_exchange() -> list[dict]:
+    return [
+        at(0.0, GUARD_POSE, x=1.32),
+        # Retrocede ante la presión
+        at(0.3, feet={"l": F(-0.40, 0.12), "lyaw": 45}),
+        at(0.45, feet={"r": F(0.18, -0.09)}),
+        at(0.6, x=1.55),
+        # A) estocada a fondo
+        at(0.7, CHAMBER),
+        at(0.95, THRUST, x=1.35, feet={"r": F(0.55, -0.09)}, e="in"),
+        at(1.15, GUARD_POSE, x=1.5, feet={"r": F(0.30, -0.09)}),
+        # B) para el tajo de arriba
+        at(1.6, HIGH_BLOCK, dz=-0.13, spine=(-4, 0, 0), e="in"),
+        at(1.75, dz=-0.10),
+        # C) doble tajo: diagonal desde su derecha y revés desde su izquierda
+        at(1.95, DIAG_UP),
+        at(2.15, DIAG_CUT, x=1.3, feet={"r": F(0.42, -0.09)}, e="in"),
+        at(2.35, BACKHAND_UP),
+        at(2.55, BACKHAND_CUT, x=1.15, e="in"),
+        at(2.5, feet={"l": F(-0.18, 0.12), "lyaw": 45}),
+        at(2.75, GUARD_POSE, feet={"r": F(0.30, -0.09)}),
+        # D) para el contraataque y retrocede
+        at(3.15, DIAG_BLOCK, spine=(0, 12, 0), e="in"),
+        at(3.3, feet={"l": F(-0.42, 0.12), "lyaw": 45}),
+        at(3.45, x=1.4, feet={"r": F(0.25, -0.09)}),
+        at(3.5, GUARD_POSE),
+        # E) desvía la estocada
+        at(3.85, BEAT_PARRY, spine=(0, 10, 0), e="in"),
+        at(4.05, GUARD_POSE),
+        # F) tajo bajo
+        at(4.25, LOW_UP),
+        at(4.5, LOW_CUT, x=1.25, dz=-0.15, feet={"r": F(0.45, -0.09)}, e="in"),
+        at(4.7, GUARD_POSE, feet={"r": F(0.30, -0.09)}),
+        # G) bloquea el tajo horizontal y responde de arriba
+        at(4.95, LEFT_BLOCK, spine=(0, 15, 0), e="in"),
+        at(5.2, OVERHEAD_UP),
+        at(5.4, OVERHEAD_CUT, e="in"),
+        at(5.6, rh=("t", F(0.38, -0.1, 1.4)), pitch=4, spine=(3, 0, 0)),
+        at(5.75, GUARD_POSE, x=1.25),
+    ]
+
+
+# Choques del intercambio (segundos desde su inicio): sonido y quién recibe el golpe
+EXCHANGE_CLASHES = [
+    (0.95, "clash", "m", -40),
+    (1.6, "clash_heavy", "m", -70),
+    (2.15, "clash", "b", -55),
+    (2.55, "clash_2", "b", -55),
+    (3.15, "clash_heavy", "m", -60),
+    (3.85, "clash", "m", -40),
+    (4.5, "clash_2", "b", -45),
+    (4.95, "clash", "m", -55),
+    (5.4, "clash_heavy", "b", -70),
+]
+
+
+def later(t: float) -> float:
+    """Tiempo de la coreografía base en la versión con el intercambio intercalado."""
+    return t + EXCHANGE_LEN if t >= EXCHANGE_AT else t
+
+
+def shifted(keys: list[dict]) -> list[dict]:
+    return [dict(k, t=later(k["t"])) for k in keys]
+
+
+CUES = sorted([(later(t), s) for t, s in BASE_CUES] + [(EXCHANGE_AT + t, s) for t, s, _, _ in EXCHANGE_CLASHES])
+BOLIVAR_HITS = [(later(t), w) for t, w in BASE_BOLIVAR_HITS] + [(EXCHANGE_AT + t, w) for t, _, who, w in EXCHANGE_CLASHES if who == "b"]
+MONTEVERDE_HITS = [(later(t), w) for t, w in BASE_MONTEVERDE_HITS] + [(EXCHANGE_AT + t, w) for t, _, who, w in EXCHANGE_CLASHES if who == "m"]
+MONTEVERDE_STAGGER = (later(5.75), later(6.55), 0.9)
+BOLIVAR_STAGGER = (later(7.3), later(7.95), 0.75)
 
 
 def bolivar_keys() -> list[dict]:
@@ -449,7 +603,7 @@ def monteverde_keys() -> list[dict]:
         dict(t=12.6, rh=("t", F(0.08, -0.25, 1.95)), blade=F(0.05, -0.1, 1.0), edge=F(1, 0, 0), lh=("t", F(0.08, 0.24, 1.0)),
              spine=(-6, 0, 0), head=(-12, 0, 0), dz=0.0),
         dict(t=13.4, rh=("t", F(0.08, -0.25, 1.9))),
-        dict(t=DURATION, rh=("t", F(0.08, -0.25, 1.95))),
+        dict(t=BASE_DURATION, rh=("t", F(0.08, -0.25, 1.95))),
     ]
 
 
@@ -546,7 +700,7 @@ def build_bolivar() -> tuple[bpy.types.Object, bpy.types.Object]:
     add_sword_bone(arm, Vector((0.14, -0.04, 0.88)), Vector((0.0, 0.45, -0.89)))
     build_saber(arm, body)
     rig = Rig(arm)
-    rig.keys(bolivar_keys())
+    rig.keys(shifted(bolivar_keys()) + bolivar_exchange())
     for t, w in BOLIVAR_HITS:
         rig.impulse(t, w)
     rig.stagger(*BOLIVAR_STAGGER, kick=-180)
@@ -561,7 +715,7 @@ def build_monteverde() -> tuple[bpy.types.Object, bpy.types.Object]:
     build_saber(arm, body)
     isolate_hat(body)
     rig = Rig(arm)
-    rig.keys(monteverde_keys())
+    rig.keys(shifted(monteverde_keys()) + monteverde_exchange())
     for t, w in MONTEVERDE_HITS:
         rig.impulse(t, w)
     rig.stagger(*MONTEVERDE_STAGGER, kick=-170)

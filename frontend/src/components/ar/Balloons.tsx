@@ -5,7 +5,7 @@ import yummy from "@/assets/models/globo-yummy.glb";
 
 // Los globos salen de scripts/battle/build_balloons.py (logos en assets/images/sponsors)
 const MODELS = [yummy, cashea];
-const COUNT = 12;
+const COUNT = 32;
 // Altura del centro del globo cuando su base toca el piso (el globo mide ~57 cm de alto)
 const GROUND_Y = 0.29;
 // Desinflarse al tocar el piso
@@ -25,8 +25,9 @@ function rand(seed: number): number {
 const BALLOONS = Array.from({ length: COUNT }, (_, i) => {
   const fromY = 4.5 + rand(i + 61) * 1.5;
   const terminal = 0.9 + rand(i + 91) * 0.5; // m/s
-  const x = -1.8 + rand(i + 1) * 4.4;
-  const z = -2.2 + rand(i + 31) * 3.2;
+  // Repartidos alrededor de la pelea y hacia el usuario (+Z), sin caerle encima (z < 1,4)
+  const x = -2.6 + rand(i + 1) * 6.0;
+  const z = -3.0 + rand(i + 31) * 4.4;
   return {
     model: MODELS[i % MODELS.length],
     x,
@@ -36,7 +37,8 @@ const BALLOONS = Array.from({ length: COUNT }, (_, i) => {
     toZ: z + (rand(i + 271) - 0.5) * 0.6,
     yaw: rand(i + 121) * 360,
     duration: ((fromY - GROUND_Y) / terminal) * 1000,
-    delay: rand(i + 181) * 2500,
+    // Escalonados: una lluvia que dura unos segundos, no todos a la vez
+    delay: rand(i + 181) * 4000,
     spin: rand(i + 211) > 0.5 ? "globo_giro_der" : "globo_giro_izq",
   };
 });
