@@ -1,7 +1,7 @@
 import { ViroARSceneNavigator } from "@reactvision/react-viro";
 import { Redirect, router, useIsFocused } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -14,6 +14,7 @@ import { useMicrophonePermission } from "@/hooks/useMicrophonePermission";
 import { useSimulationConversation } from "@/hooks/useSimulationConversation";
 import { useStartSimulation } from "@/hooks/useStartSimulation";
 import { colors, fonts } from "@/theme";
+import { mouthOpenness } from "@/utils/lipsync";
 
 type CameraPermission = "pending" | "granted" | "denied";
 
@@ -71,7 +72,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
 
   const { region } = active;
   const current = region.simulations.find((s) => s.id === active.simulationId);
-  const { phase, lastTurn, error } = conversation;
+  const { phase, lastTurn, error, viseme } = conversation;
   const hasObjects = active.objects.length > 0;
 
   // Al salir de la pantalla la sesión AR se destruye: todo vuelve al estado inicial
@@ -81,6 +82,19 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   useEffect(() => {
     arSession.loadObjects(active.objects);
   }, [active.objects]);
+
+  // Lipsync: el visema que suena mueve la boca del anfitrión y, mientras habla, gesticula
+  const speaking = phase === "speaking";
+  const wasSpeaking = useRef(false);
+  useEffect(() => {
+    // Solo en los cambios reales: un talk(false) al colocarlo pisaría el saludo inicial
+    if (speaking === wasSpeaking.current) return;
+    wasSpeaking.current = speaking;
+    arSession.talk(speaking);
+  }, [speaking]);
+  useEffect(() => {
+    if (speaking) arSession.set({ mouth: mouthOpenness(viseme) });
+  }, [speaking, viseme]);
 
   async function switchSimulation(simulationId: string) {
     setScenesOpen(false);

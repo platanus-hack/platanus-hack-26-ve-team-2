@@ -20,7 +20,9 @@ export type ArSessionState = {
   /** Dónde quedó anclado el personaje (y su giro para mirar a la cámara) */
   placement: { id: number; point: Vec3; yaw: number } | null;
   /** Viro solo arranca una animación cuando `run` pasa de false a true */
-  animation: { name: "saludo"; run: boolean };
+  animation: { name: "saludo" | "hablando"; run: boolean; loop: boolean };
+  /** Peso (0–1) de la shape key "boca_abierta" del anfitrión, según el visema que suena */
+  mouth: number;
   modelStatus: "idle" | "loading" | "ready" | "error";
 };
 
@@ -31,7 +33,8 @@ const initialState: ArSessionState = {
   occlusion: "checking",
   floor: null,
   placement: null,
-  animation: { name: "saludo", run: false },
+  animation: { name: "saludo", run: false, loop: false },
+  mouth: 0,
   modelStatus: "idle",
 };
 
@@ -58,6 +61,7 @@ export const arSession = {
       floor: null,
       placement: null,
       animation: initialState.animation,
+      mouth: 0,
       modelStatus: "idle",
     }),
   subscribe(listener: () => void) {
@@ -77,8 +81,16 @@ export const arSession = {
     return true;
   },
   wave() {
-    set({ animation: { name: "saludo", run: false } });
-    setTimeout(() => set({ animation: { name: "saludo", run: true } }), 50);
+    set({ animation: { name: "saludo", run: false, loop: false } });
+    setTimeout(() => set({ animation: { name: "saludo", run: true, loop: false } }), 50);
+  },
+  /** Mientras habla gesticula en loop; al callar se detiene y cierra la boca */
+  talk(speaking: boolean) {
+    set(
+      speaking
+        ? { animation: { name: "hablando", run: true, loop: true } }
+        : { animation: { name: "hablando", run: false, loop: false }, mouth: 0 },
+    );
   },
 };
 

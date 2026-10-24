@@ -58,6 +58,7 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
   const placement = useArSession((s) => s.placement);
   const floor = useArSession((s) => s.floor);
   const animation = useArSession((s) => s.animation);
+  const mouth = useArSession((s) => s.mouth);
   const objects = useArSession((s) => s.objects);
   // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
   const hostId = objects.find((o) => o.kind === "dynamic")?.id;
@@ -208,12 +209,15 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
                 scale={obj.transform.scale}
                 animation={
                   isHost
-                    ? // Solo saluda (al aparecer y al tocarlo); sin animación de reposo se queda en la pose final
-                      { name: animation.name, run: animation.run, loop: false }
+                    ? // Saluda (al aparecer y al tocarlo) y gesticula al hablar; sin animación de reposo
+                      // se queda en la pose final
+                      animation
                     : loop
                       ? { name: loop, run: true, loop: true }
                       : undefined
                 }
+                // Shape key que abre la boca (scripts/add-mouth.py)
+                morphTargets={isHost ? [{ target: "boca_abierta", weight: mouth }] : undefined}
                 onClick={isHost ? () => arSession.wave() : undefined}
                 onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
                 onLoadEnd={() => {
