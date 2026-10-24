@@ -7,6 +7,17 @@ import type { SceneObject, Vec3 } from "@/types/simulation";
 
 export type { Vec3 };
 
+// Corrección automática del tamaño: en algunos lugares (vidrios, alfombra lisa) ARCore exagera las
+// distancias y mide el piso a 1,7–1,9 m bajo el teléfono, cuando en la mano suele estar a ~1,35 m. Como
+// el personaje mide 1,7 m en esas unidades exageradas, se veía chico: lo agrandamos en la misma
+// proporción. Solo agranda (sentado el piso está cerca de verdad) y hasta un tope
+const EXPECTED_PHONE_HEIGHT = 1.35;
+const MAX_AUTO_SCALE = 1.3;
+// Ajuste manual del tamaño (modo "mover"): pasos y rango
+export const SIZE_STEP = 0.05;
+export const MIN_SIZE_SCALE = 0.7;
+export const MAX_SIZE_SCALE = 1.3;
+
 export type ArSessionState = {
   /** Objetos 3D de la simulación activa; se montan relativos al punto del piso elegido */
   objects: SceneObject[];
@@ -16,11 +27,22 @@ export type ArSessionState = {
   /** Punto del piso al que apunta el centro de la pantalla */
   floor: { point: Vec3; camera: Vec3 } | null;
   /** Dónde quedó anclado el personaje (y su giro para mirar a la cámara) */
-  placement: { id: number; point: Vec3; yaw: number } | null;
-  /** Viro solo arranca una animación cuando `run` pasa de false a true */
-  animation: { name: "saludo" | "hablando" | "caminar"; run: boolean; loop: boolean };
+  placement: { id: number; point: Vec3; yaw: number; autoScale: number } | null;
+  /** Ajuste manual del tamaño de los personajes (se multiplica por la corrección automática) */
+  sizeScale: number;
+  /**
+   * Viro solo arranca una animación cuando `run` pasa de false a true, o al cambiar de nombre con `run` en true.
+   * "reposo" es la pose quieta de pie (scripts/add-rest-pose.py)
+   */
+  animation: { name: "saludo" | "hablando" | "caminar" | "reposo"; run: boolean; loop: boolean };
   /** Si el anfitrión camina detrás del usuario cuando se aleja (si no, solo se gira para mirarlo) */
   follow: boolean;
+  /** Si el anfitrión se gira solo para mirar al usuario; al orientarlo a mano se queda mirando hacia donde lo dejaron */
+  faceUser: boolean;
+  /** Modo "mover": el usuario reubica y orienta al anfitrión; mientras tanto no camina ni se gira solo */
+  editing: boolean;
+  /** Aviso breve del modo "mover" (p. ej. no se encontró el piso donde tocó) */
+  moveNotice: string | null;
   /** Si el anfitrión está caminando hacia el usuario y si está hablando: deciden su animación */
   walking: boolean;
   speaking: boolean;
@@ -33,8 +55,12 @@ const initialState: ArSessionState = {
   floorY: null,
   floor: null,
   placement: null,
+  sizeScale: 1,
   animation: { name: "saludo", run: false, loop: false },
   follow: false,
+  faceUser: true,
+  editing: false,
+  moveNotice: null,
   walking: false,
   speaking: false,
   modelStatus: "idle",
@@ -52,6 +78,19 @@ function set(partial: Partial<ArSessionState>) {
 }
 
 // La boca cambia muchas veces por segundo: va directo al modelo nativo, sin pasar por React
+/** Órdenes del modo "mover" para el anfitrión; las aplica la escena, que conoce la cámara y su pose */
+export type HostCommand =
+  /** Desplazamiento del dedo (px) en la pantalla: a la derecha y hacia arriba (= alejarlo) */
+  | { type: "move"; right: number; up: number }
+  /** Toque en la pantalla (px, coordenadas de la ventana): lo lleva al piso en ese punto */
+  | { type: "place"; x: number; y: number }
+  /** Giro en grados (positivo = antihorario visto desde arriba) */
+  | { type: "rotate"; degrees: number }
+  /** Orientación respecto del usuario */
+  | { type: "face"; side: "front" | "side" | "back" };
+
+let hostControl: ((command: HostCommand) => void) | null = null;
+
 let mouth = 0;
 let mouthListener: ((weight: number) => void) | null = null;
 
@@ -67,7 +106,7 @@ export const arSession = {
   // Conserva la preferencia de seguir al usuario
   reset: () => {
     setMouth(0);
-    set({ ...initialState, follow: state.follow });
+    set({ ...initialState, follow: state.follow, sizeScale: state.sizeScale });
   },
   /**
    * Otra simulación: se vuelven a colocar los objetos. No toca `tracking` ni `floorY`: reflejan la sesión nativa de ARKit/ARCore, que Viro solo reporta cuando
@@ -87,6 +126,8 @@ export const arSession = {
       objects,
       floor: null,
       placement: null,
+      faceUser: true,
+      editing: false,
       animation: initialState.animation,
       walking: false,
       modelStatus: "idle",
@@ -113,19 +154,55 @@ export const arSession = {
     // El modelo mira hacia +Z; yaw 0 = de frente a una cámara ubicada en +Z
     const yaw = (Math.atan2(cx - px, cz - pz) * 180) / Math.PI;
     // Un id nuevo remonta el nodo, y Viro lo ancla en el mundo justo en ese punto
-    set({ placement: { id: Date.now(), point: floor.point, yaw }, modelStatus: "loading" });
+    const drop = floor.camera[1] - floor.point[1];
+    const autoScale = Math.min(MAX_AUTO_SCALE, Math.max(1, drop / EXPECTED_PHONE_HEIGHT));
+    if (__DEV__) console.log("[AR] colocado", JSON.stringify({ point: floor.point, drop: drop.toFixed(2), autoScale: autoScale.toFixed(2) }));
+    set({
+      placement: { id: Date.now(), point: floor.point, yaw, autoScale },
+      modelStatus: "loading",
+      faceUser: true,
+      editing: false,
+    });
     return true;
   },
   wave() {
     set({ animation: { name: "saludo", run: false, loop: false } });
     setTimeout(() => set({ animation: { name: "saludo", run: true, loop: false } }), 50);
   },
+  /** Seguir al usuario implica volver a mirarlo */
   setFollow(follow: boolean) {
-    set({ follow });
+    set(follow ? { follow, faceUser: true } : { follow });
+  },
+  /** Vuelve a girarse solo para mirar al usuario (tras haberlo orientado a mano) */
+  lookAtUser() {
+    set({ faceUser: true });
+  },
+  /** Entra al modo "mover": deja de seguir al usuario para que no se vaya del lugar elegido */
+  startEditing() {
+    set({ editing: true, follow: false });
+  },
+  /** Agranda (+1) o achica (-1) a los personajes un paso */
+  resize(direction: 1 | -1) {
+    const next = Math.round((state.sizeScale + direction * SIZE_STEP) * 100) / 100;
+    set({ sizeScale: Math.min(MAX_SIZE_SCALE, Math.max(MIN_SIZE_SCALE, next)) });
+  },
+  stopEditing() {
+    set({ editing: false, moveNotice: null });
+  },
+  /** Orden del modo "mover"; girarlo a mano hace que se quede mirando hacia donde lo dejen */
+  controlHost(command: HostCommand) {
+    if (!state.editing) return;
+    if (command.type === "rotate" || command.type === "face") set({ faceUser: false });
+    hostControl?.(command);
+  },
+  /** Lo registra la escena para aplicar las órdenes del modo "mover" */
+  onHostControl(listener: ((command: HostCommand) => void) | null) {
+    hostControl = listener;
   },
   /**
    * Camina en loop mientras sigue al usuario: tiene prioridad sobre el saludo y sobre gesticular
-   * (hablando mientras camina solo se mueve la boca). Al detenerse, si sigue hablando, gesticula
+   * (hablando mientras camina solo se mueve la boca). Al detenerse, si sigue hablando, gesticula; si no,
+   * vuelve a la pose de reposo (detener "caminar" lo dejaba congelado a mitad del paso)
    */
   walk(walking: boolean) {
     if (walking) {
@@ -135,7 +212,7 @@ export const arSession = {
         walking,
         animation: state.speaking
           ? { name: "hablando", run: true, loop: true }
-          : { name: "caminar", run: false, loop: false },
+          : { name: "reposo", run: true, loop: false },
       });
     } else {
       set({ walking });

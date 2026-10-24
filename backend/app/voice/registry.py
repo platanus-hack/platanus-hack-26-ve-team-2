@@ -9,6 +9,7 @@ Para añadir uno nuevo, p. ej. Whisper local:
 import importlib
 
 from app.core.config import Settings
+from app.voice.fallback import FallbackLanguageModel, Researcher
 from app.voice.personas import PersonaCatalog
 from app.voice.ports import LanguageModel, SpeechToText, TextToSpeech
 from app.voice.service import ConversationService, VoiceLimits
@@ -25,9 +26,27 @@ def _factory(provider: str, kind: str):
     return getattr(importlib.import_module(_PROVIDERS[provider]), f"build_{kind}")
 
 
+def _build_researcher(settings: Settings) -> Researcher | None:
+    """Consulta de respaldo con Claude, solo si hay ANTHROPIC_API_KEY."""
+    if settings.anthropic_api_key is None:
+        return None
+    from app.voice.providers.anthropic.research import ClaudeResearcher, ResearchConfig
+
+    return ClaudeResearcher(
+        ResearchConfig(
+            api_key=settings.anthropic_api_key.get_secret_value(),
+            model=settings.voice_fallback_model,
+            max_searches=settings.voice_fallback_max_searches,
+            timeout_s=settings.voice_fallback_timeout_s,
+        )
+    )
+
+
 def build_conversation_service(settings: Settings) -> ConversationService:
     stt: SpeechToText = _factory(settings.voice_stt_provider, "stt")(settings)
-    llm: LanguageModel = _factory(settings.voice_llm_provider, "llm")(settings)
+    llm: LanguageModel = FallbackLanguageModel(
+        _factory(settings.voice_llm_provider, "llm")(settings), _build_researcher(settings)
+    )
     tts: TextToSpeech = _factory(settings.voice_tts_provider, "tts")(settings)
     sessions = SessionStore(
         ttl_s=settings.voice_session_ttl_s,

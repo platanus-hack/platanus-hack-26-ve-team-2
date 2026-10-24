@@ -54,6 +54,8 @@ export function MapScreen() {
   );
 
   const region = regions[selected];
+  // La conversación general con Bolívar no cuenta como simulación: es con la que se entra
+  const sceneCount = region?.simulations.filter((s) => s.kind !== "general").length ?? 0;
   const shape = shapes[selected];
   const meters = userLocation && shape ? distanceInMeters(userLocation, shape.center) : null;
   const isInside = userLocation && shape ? isInsidePolygon(userLocation, shape.ring) : false;
@@ -226,7 +228,7 @@ export function MapScreen() {
               )}
               <View style={styles.chip}>
                 <Text style={styles.chipText}>
-                  {region.simulations.length} {region.simulations.length === 1 ? "simulación" : "simulaciones"}
+                  {sceneCount} {sceneCount === 1 ? "simulación" : "simulaciones"}
                 </Text>
               </View>
               <View style={styles.chip}>

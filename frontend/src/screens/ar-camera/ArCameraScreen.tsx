@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { CameraShade, MicPermissionPrompt, PushToTalkButton, SimulationsSheet } from "@/components/ar";
+import { CameraShade, MicPermissionPrompt, MovePanel, MoveSurface, PushToTalkButton, SimulationsSheet } from "@/components/ar";
 import { VistaARScene } from "@/components/ar/VistaARScene";
 import { CircleButton, Icon, StatusRow } from "@/components/common";
 import { type ActiveSimulation, useActiveSimulation } from "@/contexts/ActiveSimulationContext";
@@ -94,6 +94,14 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const placed = useArSession((s) => s.placement !== null);
   const modelStatus = useArSession((s) => s.modelStatus);
   const follow = useArSession((s) => s.follow);
+  const faceUser = useArSession((s) => s.faceUser);
+  const editing = useArSession((s) => s.editing);
+  const moveNotice = useArSession((s) => s.moveNotice);
+  // El anfitrión que llega caminando ya tiene su lugar definido: ese no se puede mover
+  const movableHost = useArSession((s) => {
+    const host = s.objects.find((o) => o.kind === "dynamic");
+    return !!host && host.kind === "dynamic" && !host.entrance;
+  });
 
   const { region } = active;
   const current = region.simulations.find((s) => s.id === active.simulationId);
@@ -159,6 +167,16 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   })();
   const canStart = hasObjects && tracking && hasFloor;
 
+  // Se puede mover cuando el personaje está listo y visible
+  const canMove = placed && movableHost && modelStatus === "ready" && tracking;
+  const isEditing = editing && canMove;
+  // El aviso del modo "mover" se va solo
+  useEffect(() => {
+    if (!moveNotice) return;
+    const timer = setTimeout(() => arSession.set({ moveNotice: null }), 2800);
+    return () => clearTimeout(timer);
+  }, [moveNotice]);
+
   const placedHint = (() => {
     if (modelStatus === "error") return "No se pudo cargar el personaje";
     if (modelStatus !== "ready") return "Cargando el personaje…";
@@ -213,6 +231,18 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
               <Text style={styles.directionText}>Apunta al piso frente a ti</Text>
             </View>
           )
+        ) : isEditing ? (
+          <View style={styles.tip}>
+            <Text style={styles.tipTitle}>Modo mover</Text>
+            {moveNotice ? (
+              <Text style={styles.tipText}>{moveNotice}</Text>
+            ) : (
+              <>
+                <Text style={styles.tipText}>Toca el piso donde quieras ponerlo, aunque sea a tu espalda: gira y toca</Text>
+                <Text style={styles.tipText}>Desliza un dedo para ajustarlo y usa los botones para orientarlo</Text>
+              </>
+            )}
+          </View>
         ) : (
           (lastTurn || phase === "sending") && (
             <View style={styles.speech}>
@@ -223,8 +253,13 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
         )}
       </View>
 
+      {/* Debajo de los controles: en modo "mover" el dedo en la pantalla mueve al personaje */}
+      {isEditing && <MoveSurface />}
+
       <View style={[styles.bottom, { paddingBottom: insets.bottom + 28 }]}>
-        {!placed ? (
+        {isEditing ? (
+          <MovePanel />
+        ) : !placed ? (
           <>
             <View style={styles.ready}>
               <StatusRow dark title={status.title} subtitle={status.subtitle} />
@@ -247,8 +282,33 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
           </>
         ) : (
           <>
+            <View style={styles.chips}>
+              {canMove && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Mover y orientar al personaje"
+                  onPress={() => arSession.startEditing()}
+                  style={({ pressed }) => [styles.chip, pressed && { opacity: 0.7 }]}
+                >
+                  <Icon name="move" size={16} color="white" />
+                  <Text style={styles.chipText}>Mover</Text>
+                </Pressable>
+              )}
+              {/* Lo orientaron a mano: con esto vuelve a girarse solo para mirar al usuario */}
+              {canMove && !faceUser && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Que vuelva a mirarme"
+                  onPress={() => arSession.lookAtUser()}
+                  style={({ pressed }) => [styles.chip, pressed && { opacity: 0.7 }]}
+                >
+                  <Icon name="eye" size={16} color="white" />
+                  <Text style={styles.chipText}>Mirarme</Text>
+                </Pressable>
+              )}
+            </View>
             <View style={styles.sceneLabel}>
-              <Text style={styles.nowPlaying}>REPRODUCIENDO</Text>
+              <Text style={styles.nowPlaying}>{current?.kind === "general" ? "EN CONVERSACIÓN" : "REPRODUCIENDO"}</Text>
               <Text style={styles.sceneTitle}>{current?.title ?? region.name}</Text>
               <Text style={[styles.remaining, error && styles.error]} numberOfLines={2}>
                 {placedHint ??
@@ -353,6 +413,32 @@ const styles = StyleSheet.create({
   },
   speechName: { fontFamily: fonts.displayBold, fontSize: 13, color: colors.ink },
   speechText: { fontFamily: fonts.regular, fontSize: 11, lineHeight: 15, color: colors.ink },
+  tip: {
+    ...glass,
+    backgroundColor: "rgba(21,36,29,0.82)",
+    position: "absolute",
+    top: "4%",
+    marginHorizontal: 24,
+    alignItems: "center",
+    gap: 3,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+  },
+  tipTitle: { color: "white", fontSize: 13, fontFamily: fonts.bold, marginBottom: 2 },
+  tipText: { color: "#dfe5e1", fontSize: 11, fontFamily: fonts.regular, textAlign: "center" },
+  chips: { flexDirection: "row", gap: 8 },
+  chip: {
+    ...glass,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    marginBottom: 12,
+  },
+  chipText: { color: "white", fontSize: 12, fontFamily: fonts.medium },
   bottom: { position: "absolute", left: 0, right: 0, bottom: 0, paddingTop: 20, paddingHorizontal: 24, zIndex: 3 },
   ready: { alignItems: "center" },
   shutter: {

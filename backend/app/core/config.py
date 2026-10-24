@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     elevenlabs_agent_id: str = ""  # vacío = se busca/crea el agente plantilla
     elevenlabs_agent_name: str = "platanus-ar-voice-template"
 
+    # --- Consulta de respaldo (Claude) ---
+    # Solo cuando el LLM principal no conoce un dato concreto (responde el marcador de
+    # app/voice/fallback.py): Claude lo verifica con búsqueda web y responde en personaje.
+    # Sin ANTHROPIC_API_KEY no hay respaldo y el personaje dice que no lo recuerda.
+    anthropic_api_key: SecretStr | None = None
+    voice_fallback_model: str = "claude-haiku-5-5"
+    voice_fallback_max_searches: int = 2
+    voice_fallback_timeout_s: float = 15.0
+
 
 @lru_cache
 def get_settings() -> Settings:
