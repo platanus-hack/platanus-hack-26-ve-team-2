@@ -34,6 +34,21 @@ uv run uvicorn app.main:app --reload
 
 Coordenadas en formato GeoJSON: `[lng, lat]`, SRID 4326, anillo cerrado (primer punto = último).
 
+## Regiones y simulaciones
+Una **región** es un polígono del mapa con una o más **simulaciones**. Cada simulación tiene un
+prompt genérico del sitio histórico (contexto para la conversación) y objetos 3D estáticos o
+dinámicos que viven en la app, indexados por `simulation_id`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/regions` | Regiones con polígono GeoJSON, `center` y sus simulaciones |
+| POST | `/regions/{id}/simulations/start` | Body opcional `{"simulation_id"}` (vacío = la por defecto) → `simulation_id`, `region_id`, `voice_location_id` |
+
+Por ahora el catálogo está hardcodeado en `app/simulations/catalog.py` (región `cubo_negro`, en
+Chuao, con la simulación `carabobo_prueba`). Arquitectura (`app/simulations/`): `domain.py`
+(Region, Simulation), `repository.py` (puerto `RegionRepository` + implementación en memoria) y
+`service.py` (casos de uso). Para pasar a PostGIS basta otra implementación del repositorio.
+
 ## Voz: conversación con personajes
 Pipeline por turno: audio → **STT** → **LLM** (prompt de la ubicación/personaje) → **TTS** + **visemas**
 para lipsync. Proveedor actual: ElevenLabs (Scribe v2, Agents text-only, Flash v2.5). Requiere

@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { router, useLocalSearchParams } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -7,17 +7,30 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CameraShade, FigureSilhouette, SimulationsSheet } from "@/components/ar";
 import { CircleButton, Icon, PrimaryButton, PrimaryLabel, StatusRow } from "@/components/common";
-import { simulations, sites } from "@/data/sites";
+import { useActiveSimulation } from "@/contexts/ActiveSimulationContext";
+import { useStartSimulation } from "@/hooks/useStartSimulation";
 import { colors, fonts } from "@/theme";
 
-// Vista previa estática: la cámara AR real (Viro) se conecta más adelante
+// Vista previa estática: la cámara AR real (Viro) montará `active.objects` más adelante
 export function ArCameraScreen() {
   const insets = useSafeAreaInsets();
-  const { siteId } = useLocalSearchParams<{ siteId?: string }>();
-  const site = sites.find((s) => s.id === siteId) ?? sites[0];
+  const { active, setActive } = useActiveSimulation();
+  const { start } = useStartSimulation();
   const [started, setStarted] = useState(false);
   const [scenesOpen, setScenesOpen] = useState(false);
-  const [scene, setScene] = useState(simulations[0].title);
+
+  // Se llega aquí solo desde "Comenzar simulación"; sin simulación activa no hay escena que montar
+  if (!active) return <Redirect href="/" />;
+
+  const { region } = active;
+  const current = region.simulations.find((s) => s.id === active.simulationId);
+
+  async function switchSimulation(simulationId: string) {
+    setScenesOpen(false);
+    if (simulationId === active?.simulationId) return;
+    const loaded = await start(region.id, simulationId);
+    if (loaded) setActive({ ...loaded, region });
+  }
 
   return (
     <View style={styles.container}>
@@ -90,7 +103,7 @@ export function ArCameraScreen() {
           <>
             <View style={styles.sceneLabel}>
               <Text style={styles.nowPlaying}>REPRODUCIENDO</Text>
-              <Text style={styles.sceneTitle}>{scene}</Text>
+              <Text style={styles.sceneTitle}>{current?.title ?? region.name}</Text>
               <Text style={styles.remaining}>Quedan 02:14</Text>
             </View>
             <PrimaryButton onPress={() => setScenesOpen(true)}>
@@ -103,13 +116,10 @@ export function ArCameraScreen() {
 
       <SimulationsSheet
         visible={scenesOpen}
-        siteName={site.name}
-        simulations={simulations}
-        current={scene}
-        onSelect={(title) => {
-          setScene(title);
-          setScenesOpen(false);
-        }}
+        siteName={region.name}
+        simulations={region.simulations}
+        currentId={active.simulationId}
+        onSelect={switchSimulation}
         onClose={() => setScenesOpen(false)}
       />
     </View>
