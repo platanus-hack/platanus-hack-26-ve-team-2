@@ -9,7 +9,8 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.platanushack.ar"
+      "bundleIdentifier": "com.platanushack.ar",
+      "appleTeamId": "MYV6MKFDJ5"
     },
     "android": {
       "adaptiveIcon": {

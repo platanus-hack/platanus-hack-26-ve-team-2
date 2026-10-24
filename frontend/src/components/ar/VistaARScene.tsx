@@ -77,7 +77,8 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
     arSession.set({ floorY: planes.current.size ? Math.min(...planes.current.values()) : null });
   }
 
-  function onTrackingUpdated(trackingState: unknown) {
+  function onTrackingUpdated(trackingState: unknown, reason?: unknown) {
+    if (__DEV__) console.log("[AR] tracking", { state: trackingState, reason });
     arSession.set({ tracking: trackingState === ViroTrackingStateConstants.TRACKING_NORMAL });
   }
 
@@ -174,15 +175,17 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
                       : undefined
                 }
                 onClick={isHost ? () => arSession.wave() : undefined}
-                onLoadEnd={
-                  isHost
-                    ? () => {
-                        arSession.set({ modelStatus: "ready" });
-                        arSession.wave();
-                      }
-                    : undefined
-                }
-                onError={isHost ? () => arSession.set({ modelStatus: "error" }) : undefined}
+                onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
+                onLoadEnd={() => {
+                  if (__DEV__) console.log("[AR] modelo cargado", obj.id);
+                  if (!isHost) return;
+                  arSession.set({ modelStatus: "ready" });
+                  arSession.wave();
+                }}
+                onError={(event) => {
+                  console.warn("[AR] error cargando modelo", obj.id, event?.nativeEvent ?? event);
+                  if (isHost) arSession.set({ modelStatus: "error" });
+                }}
               />
             );
           })}

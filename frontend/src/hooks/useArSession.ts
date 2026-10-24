@@ -47,6 +47,19 @@ export const arSession = {
   get: () => state,
   set,
   reset: () => set(initialState),
+  /**
+   * Otra simulación: se vuelven a colocar los objetos. No toca `tracking`, `floorY` ni
+   * `occlusion`: reflejan la sesión nativa de ARKit/ARCore, que Viro solo reporta cuando
+   * cambian; pisarlos dejaría la UI esperando un evento que no vuelve a llegar.
+   */
+  loadObjects: (objects: SceneObject[]) =>
+    set({
+      objects,
+      floor: null,
+      placement: null,
+      animation: initialState.animation,
+      modelStatus: "idle",
+    }),
   subscribe(listener: () => void) {
     listeners.add(listener);
     return () => listeners.delete(listener);
