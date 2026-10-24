@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-import type { SceneObject, Vec3 } from "@/types/simulation";
+import type { Choreography, SceneObject, Vec3 } from "@/types/simulation";
 
 // Estado compartido entre la escena Viro (que corre dentro del navegador AR)
 // y la UI de React Native que la envuelve.
@@ -32,9 +32,17 @@ export type ArSessionState = {
   sizeScale: number;
   /**
    * Viro solo arranca una animación cuando `run` pasa de false a true, o al cambiar de nombre con `run` en true.
-   * "reposo" es la pose quieta de pie (scripts/add-rest-pose.py)
+   * El anfitrión usa "saludo", "hablando", "caminar", "reposo" (pose quieta de pie, scripts/add-rest-pose.py)
+   * y la de la coreografía
    */
-  animation: { name: "saludo" | "hablando" | "caminar" | "reposo"; run: boolean; loop: boolean };
+  animation: { name: string; run: boolean; loop: boolean };
+  /** Escena coreografiada de la simulación (la batalla), si tiene */
+  choreography: Choreography | null;
+  /**
+   * Fase de la coreografía: "waiting" hasta que todos sus modelos cargan, "playing" mientras corre la
+   * animación y "finished" al terminar (caen los globos). "off" en simulaciones sin coreografía
+   */
+  battle: "off" | "waiting" | "playing" | "finished";
   /** Si el anfitrión camina detrás del usuario cuando se aleja (si no, solo se gira para mirarlo) */
   follow: boolean;
   /** Si el anfitrión se gira solo para mirar al usuario; al orientarlo a mano se queda mirando hacia donde lo dejaron */
@@ -57,6 +65,8 @@ const initialState: ArSessionState = {
   placement: null,
   sizeScale: 1,
   animation: { name: "saludo", run: false, loop: false },
+  choreography: null,
+  battle: "off",
   follow: false,
   faceUser: true,
   editing: false,
@@ -68,6 +78,8 @@ const initialState: ArSessionState = {
 
 let state = initialState;
 const listeners = new Set<() => void>();
+// Modelos ya cargados en la colocación actual: la coreografía arranca cuando están todos
+const loadedModels = new Set<string>();
 
 function set(partial: Partial<ArSessionState>) {
   // Sin cambios no se notifica: cada aviso re-renderiza la escena y la UI
@@ -106,24 +118,44 @@ export const arSession = {
   // Conserva la preferencia de seguir al usuario
   reset: () => {
     setMouth(0);
+    loadedModels.clear();
     set({ ...initialState, follow: state.follow, sizeScale: state.sizeScale });
   },
   /**
    * Otra simulación: se vuelven a colocar los objetos. No toca `tracking` ni `floorY`: reflejan la sesión nativa de ARKit/ARCore, que Viro solo reporta cuando
    * cambian; pisarlos dejaría la UI esperando un evento que no vuelve a llegar.
    */
-  loadObjects(objects: SceneObject[]) {
+  loadObjects(objects: SceneObject[], choreography: Choreography | null = null) {
+    const battle = choreography ? "waiting" : "off";
     // Mismo anfitrión ya colocado (p. ej. Bolívar al pasar a "batalla"): se queda donde está y
     // solo se montan los objetos nuevos alrededor
     const host = (list: SceneObject[]) => list.find((o) => o.kind === "dynamic");
     const prevHost = host(state.objects);
     const nextHost = host(objects);
     if (state.placement && prevHost && nextHost?.id === prevHost.id && nextHost.model === prevHost.model) {
-      set({ objects });
+      const wasBattle = state.battle !== "off";
+      // Entrar o salir de la batalla cambia el árbol de la escena: los modelos se vuelven a montar (y cargar)
+      if (wasBattle !== !!choreography) loadedModels.clear();
+      else for (const id of loadedModels) if (!objects.some((o) => o.id === id)) loadedModels.delete(id);
+      // En la batalla no hay modo "mover": la coreografía decide dónde está cada uno
+      set({
+        objects,
+        choreography,
+        battle,
+        walking: false,
+        follow: choreography ? false : state.follow,
+        editing: choreography ? false : state.editing,
+      });
+      // Vuelve de la batalla: el anfitrión reaparece saludando
+      if (wasBattle && !choreography) arSession.wave();
+      else arSession.startIfReady();
       return;
     }
+    loadedModels.clear();
     set({
       objects,
+      choreography,
+      battle,
       floor: null,
       placement: null,
       faceUser: true,
@@ -133,6 +165,34 @@ export const arSession = {
       modelStatus: "idle",
     });
     setMouth(0);
+  },
+  /** Lo avisa cada modelo al terminar de cargar */
+  markLoaded(id: string) {
+    loadedModels.add(id);
+    arSession.startIfReady();
+  },
+  /** Arranca la coreografía si está esperando y ya cargaron todos sus personajes */
+  startIfReady() {
+    const { battle, placement, objects } = state;
+    if (battle !== "waiting" || !placement) return;
+    if (!objects.every((o) => o.kind !== "dynamic" || loadedModels.has(o.id))) return;
+    arSession.playBattle();
+  },
+  playBattle() {
+    const { choreography } = state;
+    if (!choreography) return;
+    // Todos los personajes arrancan en el mismo render: el anfitrión por `animation`, el resto por `battle`
+    set({ battle: "playing", animation: { name: choreography.animation, run: true, loop: false } });
+  },
+  finishBattle() {
+    if (state.battle === "playing") set({ battle: "finished" });
+  },
+  /** Repite desde el principio: Viro solo reinicia una animación si `run` pasa de false a true */
+  replayBattle() {
+    const { choreography } = state;
+    if (!choreography) return;
+    set({ battle: "waiting", animation: { name: choreography.animation, run: false, loop: false } });
+    setTimeout(() => arSession.startIfReady(), 50);
   },
   /** Peso (0–1) de la shape key "boca_abierta" del anfitrión, según el visema que suena */
   setMouth,
@@ -157,11 +217,14 @@ export const arSession = {
     const drop = floor.camera[1] - floor.point[1];
     const autoScale = Math.min(MAX_AUTO_SCALE, Math.max(1, drop / EXPECTED_PHONE_HEIGHT));
     if (__DEV__) console.log("[AR] colocado", JSON.stringify({ point: floor.point, drop: drop.toFixed(2), autoScale: autoScale.toFixed(2) }));
+    loadedModels.clear();
     set({
       placement: { id: Date.now(), point: floor.point, yaw, autoScale },
       modelStatus: "loading",
       faceUser: true,
       editing: false,
+      // Recolocada, la batalla vuelve a empezar cuando carguen los modelos
+      battle: state.choreography ? "waiting" : "off",
     });
     return true;
   },
@@ -171,6 +234,8 @@ export const arSession = {
   },
   /** Seguir al usuario implica volver a mirarlo */
   setFollow(follow: boolean) {
+    // En la batalla la coreografía decide dónde está cada uno
+    if (state.battle !== "off") return;
     set(follow ? { follow, faceUser: true } : { follow });
   },
   /** Vuelve a girarse solo para mirar al usuario (tras haberlo orientado a mano) */
@@ -221,6 +286,8 @@ export const arSession = {
   /** Mientras habla gesticula en loop (si no está caminando); al callar se detiene y cierra la boca */
   talk(speaking: boolean) {
     if (!speaking) setMouth(0);
+    // En la batalla los personajes no conversan: la animación no se interrumpe
+    if (state.battle !== "off") return;
     if (state.walking) {
       set({ speaking });
       return;
