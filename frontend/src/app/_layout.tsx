@@ -5,6 +5,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 
 import { ActiveSimulationProvider } from "@/contexts/ActiveSimulationContext";
+import { useStartupPermissions } from "@/hooks/useStartupPermissions";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -21,6 +22,9 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded || error) SplashScreen.hideAsync();
   }, [loaded, error]);
+
+  // Al abrir la app se piden todos los permisos (ubicación, cámara, micrófono)
+  useStartupPermissions(loaded || !!error);
 
   if (!loaded && !error) return null;
 

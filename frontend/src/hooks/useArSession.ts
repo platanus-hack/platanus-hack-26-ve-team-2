@@ -49,13 +49,24 @@ function set(partial: Partial<ArSessionState>) {
 export const arSession = {
   get: () => state,
   set,
-  reset: () => set(initialState),
+  // Conserva el soporte de oclusión ya conocido: así la próxima sesión arranca con la configuración
+  // final y ARCore no se reconfigura (pausa y reanuda) justo al iniciar
+  reset: () => set({ ...initialState, occlusion: state.occlusion }),
   /**
    * Otra simulación: se vuelven a colocar los objetos. No toca `tracking`, `floorY` ni
    * `occlusion`: reflejan la sesión nativa de ARKit/ARCore, que Viro solo reporta cuando
    * cambian; pisarlos dejaría la UI esperando un evento que no vuelve a llegar.
    */
-  loadObjects: (objects: SceneObject[]) =>
+  loadObjects(objects: SceneObject[]) {
+    // Mismo anfitrión ya colocado (p. ej. Bolívar al pasar a "batalla"): se queda donde está y
+    // solo se montan los objetos nuevos alrededor
+    const host = (list: SceneObject[]) => list.find((o) => o.kind === "dynamic");
+    const prevHost = host(state.objects);
+    const nextHost = host(objects);
+    if (state.placement && prevHost && nextHost?.id === prevHost.id && nextHost.model === prevHost.model) {
+      set({ objects });
+      return;
+    }
     set({
       objects,
       floor: null,
@@ -63,7 +74,8 @@ export const arSession = {
       animation: initialState.animation,
       mouth: 0,
       modelStatus: "idle",
-    }),
+    });
+  },
   subscribe(listener: () => void) {
     listeners.add(listener);
     return () => listeners.delete(listener);

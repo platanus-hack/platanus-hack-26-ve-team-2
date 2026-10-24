@@ -1,6 +1,7 @@
 import {
   Viro3DObject,
   ViroAmbientLight,
+  ViroAnimations,
   ViroARScene,
   ViroMaterials,
   ViroNode,
@@ -11,9 +12,10 @@ import {
   type ViroAnchor,
   type ViroCameraARHitTest,
 } from "@reactvision/react-viro";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { arSession, useArSession, type Vec3 } from "@/hooks/useArSession";
+import { arSession, type ArSessionState, useArSession, type Vec3 } from "@/hooks/useArSession";
+import type { SceneObject } from "@/types/simulation";
 
 // El piso está al menos así de abajo del teléfono
 const MIN_FLOOR_DROP = 0.6;
@@ -32,6 +34,11 @@ const MAX_HIT_DISTANCE = 4;
 // anillo (y el botón) no parpadeen
 const FLOOR_HOLD_MS = 1500;
 const FALLBACK_HIT_TYPES = new Set(["ExistingPlane", "EstimatedHorizontalPlane", "FeaturePoint", "DepthPoint"]);
+// El anillo va donde el rayo del centro de la pantalla corta el plano del piso: inclinar el teléfono
+// lo acerca o lo aleja. Lo limitamos a este rango horizontal (m) para que no quede bajo los pies ni
+// en el horizonte cuando se apunta recto o por encima de él
+const MIN_PLACE_DISTANCE = 0.8;
+const MAX_PLACE_DISTANCE = 6;
 
 ViroMaterials.createMaterials({
   reticle: { lightingModel: "Constant", diffuseColor: "#E66F3DDD", cullMode: "None" },
@@ -66,7 +73,9 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
   const lastUpdate = useRef(0);
   const lastHitLog = useRef(0);
   const lastFloorAt = useRef(0);
-  const planes = useRef(new Map<string, number>());
+  const planes = useRef(new Map<string, { y: number; area: number }>());
+  // Altura del último plano real que tocó el centro de la pantalla: es el piso que el usuario está viendo
+  const aimLevel = useRef<number | null>(null);
   const trackingLostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => {
@@ -80,21 +89,29 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
       .catch(() => arSession.set({ occlusion: "unsupported" }));
   }, [arSceneNavigator]);
 
-  // El piso es el plano horizontal más bajo: así nunca colocamos al personaje sobre una mesa
+  // El piso es el plano horizontal más grande. No usamos el más bajo: ARCore a veces detecta planos
+  // fantasma decenas de cm bajo el piso real y el anillo quedaba enterrado (y oculto por la oclusión)
+  function largestPlaneY(): number | null {
+    let best: { y: number; area: number } | null = null;
+    for (const p of planes.current.values()) if (!best || p.area > best.area) best = p;
+    return best?.y ?? null;
+  }
+
   function onPlane(anchor: ViroAnchor) {
     if (__DEV__) console.log("[AR] plano", JSON.stringify(anchor));
     if (anchor.type !== "plane" || !anchor.alignment?.startsWith("Horizontal")) return;
-    if ((anchor.width ?? 0) * (anchor.height ?? 0) < MIN_PLANE_AREA) return;
-    planes.current.set(anchor.anchorId, anchor.position[1]);
-    const lowest = Math.min(...planes.current.values());
+    const area = (anchor.width ?? 0) * (anchor.height ?? 0);
+    if (area < MIN_PLANE_AREA) return;
+    planes.current.set(anchor.anchorId, { y: anchor.position[1], area });
+    const floorY = largestPlaneY();
     const current = arSession.get().floorY;
-    if (current === null || Math.abs(current - lowest) > 0.01) arSession.set({ floorY: lowest });
+    if (floorY !== null && (current === null || Math.abs(current - floorY) > 0.01)) arSession.set({ floorY });
   }
 
   function onPlaneRemoved(anchor?: ViroAnchor) {
     if (!anchor) return;
     planes.current.delete(anchor.anchorId);
-    arSession.set({ floorY: planes.current.size ? Math.min(...planes.current.values()) : null });
+    arSession.set({ floorY: largestPlaneY() });
   }
 
   function onTrackingUpdated(trackingState: unknown, reason?: unknown) {
@@ -110,6 +127,25 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
       trackingLostTimer.current = null;
       arSession.set({ tracking: false });
     }, TRACKING_LOST_GRACE_MS);
+  }
+
+  /** Punto donde la vista corta el piso (a altura `floorLevel`), acotado a [MIN, MAX]_PLACE_DISTANCE. */
+  function aimPoint(camera: Vec3, forward: number[], floorLevel: number, hit?: Vec3): Vec3 | null {
+    let dx = forward[0];
+    let dz = forward[2];
+    // Mirando casi recto al piso el forward horizontal es inestable: usamos la dirección al hit
+    if (Math.hypot(dx, dz) < 0.2 && hit) {
+      dx = hit[0] - camera[0];
+      dz = hit[2] - camera[2];
+    }
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-3) return null;
+    // Distancia horizontal hasta el piso por el rayo de la cámara; mirando al horizonte o más arriba, el máximo
+    const drop = camera[1] - floorLevel;
+    const distance =
+      forward[1] < -1e-3 ? (drop / -forward[1]) * Math.hypot(forward[0], forward[2]) : MAX_PLACE_DISTANCE;
+    const d = Math.min(MAX_PLACE_DISTANCE, Math.max(MIN_PLACE_DISTANCE, distance));
+    return [camera[0] + (dx / len) * d, floorLevel, camera[2] + (dz / len) * d];
   }
 
   // Se dispara cada frame con el hit test del centro de la pantalla
@@ -132,20 +168,27 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
     const near = ([x, y, z]: number[]) =>
       Math.hypot(x - camera[0], y - camera[1], z - camera[2]) < MAX_HIT_DISTANCE;
     const hits = hitTestResults.filter((r) => near(r.transform.position));
-    // Preferimos planos reales medidos por ARCore (no estimados): la distancia, y por tanto la escala, es correcta
-    const floorHit =
-      floorY === null
-        ? undefined
-        : hits.find((r) => {
-            const y = r.transform.position[1];
-            return r.type === "ExistingPlaneUsingExtent" && Math.abs(y - floorY) < FLOOR_TOLERANCE && belowCamera(y);
-          });
-    const hit =
-      floorHit ??
-      hits.find((r) => FALLBACK_HIT_TYPES.has(r.type) && belowCamera(r.transform.position[1]));
-    if (hit) {
+    // Si el centro de la pantalla toca un plano real del piso, el anillo va justo ahí (distancia exacta)
+    const planeHit = hits.find((r) => r.type.startsWith("ExistingPlane") && belowCamera(r.transform.position[1]));
+    if (planeHit) aimLevel.current = planeHit.transform.position[1];
+    // Si no (apuntando más lejos o al horizonte), basta conocer la altura del piso: el último plano
+    // apuntado, el plano de piso detectado o, sin planos todavía, un hit menos preciso
+    const aimed = aimLevel.current !== null && belowCamera(aimLevel.current) ? aimLevel.current : null;
+    const floorLevel =
+      aimed ??
+      (floorY !== null && belowCamera(floorY)
+        ? floorY
+        : hits.find((r) => FALLBACK_HIT_TYPES.has(r.type) && belowCamera(r.transform.position[1]))?.transform
+            .position[1]);
+    const hit = hits.find((r) => floorLevel !== undefined && Math.abs(r.transform.position[1] - floorLevel) < FLOOR_TOLERANCE);
+    const point = planeHit
+      ? (planeHit.transform.position as Vec3)
+      : floorLevel === undefined
+        ? null
+        : aimPoint(camera, cameraOrientation.forward, floorLevel, hit?.transform.position as Vec3 | undefined);
+    if (point) {
       lastFloorAt.current = now;
-      arSession.set({ floor: { point: hit.transform.position as Vec3, camera } });
+      arSession.set({ floor: { point, camera } });
     } else if (now - lastFloorAt.current > FLOOR_HOLD_MS) {
       arSession.set({ floor: null });
     }
@@ -196,47 +239,93 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
             shadowNearZ={2}
             shadowFarZ={7}
           />
-          {objects.map((obj) => {
-            const isHost = obj.id === hostId;
-            const loop = obj.kind === "dynamic" && obj.animation;
-            return (
-              <Viro3DObject
-                key={obj.id}
-                source={obj.model}
-                type="GLB"
-                position={obj.transform.position}
-                rotation={obj.transform.rotation}
-                scale={obj.transform.scale}
-                animation={
-                  isHost
-                    ? // Saluda (al aparecer y al tocarlo) y gesticula al hablar; sin animación de reposo
-                      // se queda en la pose final
-                      animation
-                    : loop
-                      ? { name: loop, run: true, loop: true }
-                      : undefined
-                }
-                // Shape key que abre la boca (scripts/add-mouth.py)
-                morphTargets={isHost ? [{ target: "boca_abierta", weight: mouth }] : undefined}
-                onClick={isHost ? () => arSession.wave() : undefined}
-                onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
-                onLoadEnd={() => {
-                  if (__DEV__) console.log("[AR] modelo cargado", obj.id);
-                  if (!isHost) return;
-                  arSession.set({ modelStatus: "ready" });
-                  arSession.wave();
-                }}
-                onError={(event) => {
-                  console.warn("[AR] error cargando modelo", obj.id, event?.nativeEvent ?? event);
-                  if (isHost) arSession.set({ modelStatus: "error" });
-                }}
-              />
-            );
-          })}
+          {objects.map((obj) => (
+            <SceneModel key={obj.id} obj={obj} isHost={obj.id === hostId} hostAnimation={animation} mouth={mouth} />
+          ))}
           {/* Sombra sobre el piso real para que el personaje no se vea flotando */}
           <ViroQuad rotation={[-90, 0, 0]} width={3} height={3} arShadowReceiver />
         </ViroNode>
       )}
     </ViroARScene>
   );
+}
+
+type SceneModelProps = {
+  obj: SceneObject;
+  isHost: boolean;
+  hostAnimation: ArSessionState["animation"];
+  /** Peso de la shape key "boca_abierta" del anfitrión (lipsync) */
+  mouth: number;
+};
+
+function SceneModel({ obj, isHost, hostAnimation, mouth }: SceneModelProps) {
+  const entrance = obj.kind === "dynamic" ? obj.entrance : undefined;
+  const [loaded, setLoaded] = useState(false);
+  const model = useRef<Viro3DObject>(null);
+  const [arrived, setArrived] = useState(!entrance);
+  const walking = !!entrance && loaded && !arrived;
+  const [x, y, z] = obj.transform.position;
+  const entranceName = entrance && registerEntrance(obj.id, [x, y, z], entrance.durationMs);
+
+  const loop = obj.kind === "dynamic" && obj.animation;
+  const modelAnimation = isHost
+    ? // Saluda (al aparecer y al tocarlo) y gesticula al hablar; sin animación de reposo se queda en la pose final
+      hostAnimation
+    : walking && entrance?.walkAnimation
+      ? { name: entrance.walkAnimation, run: true, loop: true }
+      : loop
+        ? { name: loop, run: true, loop: true }
+        : undefined;
+
+  return (
+    // El nodo lleva la posición sobre el piso (y la recorre al llegar caminando); el modelo, la altura y el giro
+    <ViroNode
+      position={entrance && !arrived ? [entrance.from[0], 0, entrance.from[2]] : [x, 0, z]}
+      animation={entranceName ? { name: entranceName, run: walking, loop: false, onFinish: () => setArrived(true) } : undefined}
+    >
+      <Viro3DObject
+        ref={model}
+        source={obj.model}
+        type="GLB"
+        position={[0, y, 0]}
+        rotation={obj.transform.rotation}
+        scale={obj.transform.scale}
+        animation={modelAnimation}
+        // Shape key que abre la boca (scripts/add-mouth.py)
+        morphTargets={isHost ? [{ target: "boca_abierta", weight: mouth }] : undefined}
+        onClick={isHost ? () => arSession.wave() : undefined}
+        onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
+        onLoadEnd={() => {
+          if (__DEV__) console.log("[AR] modelo cargado", obj.id);
+          // Empieza a caminar recién cuando el modelo está listo, si no llegaría ya a mitad de camino
+          setLoaded(true);
+          if (!isHost) return;
+          // Para el lipsync: el modelo tiene que traer la shape key "boca_abierta"
+          if (__DEV__)
+            model.current
+              ?.getMorphTargets()
+              .then((targets: unknown) => console.log("[AR] shape keys", obj.id, JSON.stringify(targets)))
+              .catch((e: unknown) => console.warn("[AR] no se pudieron leer las shape keys", e));
+          arSession.set({ modelStatus: "ready" });
+          arSession.wave();
+        }}
+        onError={(event) => {
+          console.warn("[AR] error cargando modelo", obj.id, event?.nativeEvent ?? event);
+          if (isHost) arSession.set({ modelStatus: "error" });
+        }}
+      />
+    </ViroNode>
+  );
+}
+
+const registeredEntrances = new Set<string>();
+
+/** Animación de Viro que lleva el nodo en línea recta hasta su posición final. */
+function registerEntrance(id: string, [x, , z]: Vec3, duration: number): string {
+  const name = `entrada_${id}_${x}_${z}_${duration}`;
+  if (!registeredEntrances.has(name)) {
+    ViroAnimations.registerAnimations({ [name]: { properties: { positionX: x, positionZ: z }, duration, easing: "Linear" } });
+    registeredEntrances.add(name);
+  }
+  return name;
 }

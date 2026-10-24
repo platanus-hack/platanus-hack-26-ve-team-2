@@ -2,6 +2,8 @@ import * as Location from "expo-location";
 import { useEffect, useState } from "react";
 import type { LatLng } from "react-native-maps";
 
+import { requestStartupPermissions } from "./useStartupPermissions";
+
 /** Ubicación del usuario en vivo. `null` mientras no hay permiso o primer fix de GPS. */
 export function useUserLocation(): LatLng | null {
   const [location, setLocation] = useState<LatLng | null>(null);
@@ -11,6 +13,7 @@ export function useUserLocation(): LatLng | null {
     let cancelled = false;
 
     (async () => {
+      await requestStartupPermissions();
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted" || cancelled) return;
       subscription = await Location.watchPositionAsync(

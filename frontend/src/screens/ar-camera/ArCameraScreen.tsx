@@ -11,6 +11,7 @@ import { CircleButton, Icon, StatusRow } from "@/components/common";
 import { type ActiveSimulation, useActiveSimulation } from "@/contexts/ActiveSimulationContext";
 import { arSession, useArSession } from "@/hooks/useArSession";
 import { useMicrophonePermission } from "@/hooks/useMicrophonePermission";
+import { requestStartupPermissions } from "@/hooks/useStartupPermissions";
 import { useSimulationConversation } from "@/hooks/useSimulationConversation";
 import { useStartSimulation } from "@/hooks/useStartSimulation";
 import { colors, fonts } from "@/theme";
@@ -29,6 +30,7 @@ function useCameraPermission(): CameraPermission {
     // Si otro permiso (micrófono, ubicación) se pide a la vez, Android puede dejar esta promesa sin
     // resolver, así que primero revisamos y volvemos a revisar cuando la app regresa al frente.
     async function sync(askIfMissing: boolean) {
+      await requestStartupPermissions();
       if (await PermissionsAndroid.check(CAMERA)) return setPermission("granted");
       if (!askIfMissing) return;
       const result = await PermissionsAndroid.request(CAMERA);
@@ -41,6 +43,22 @@ function useCameraPermission(): CameraPermission {
   }, []);
 
   return permission;
+}
+
+// ARCore reutiliza una sola sesión nativa: si se vuelve a montar la cámara RA apenas se cerró la
+// anterior, puede reanudar con el rastreo roto y abortar la app. Esperamos a que termine de soltarse
+const AR_REMOUNT_COOLDOWN_MS = 2000;
+let lastArUnmountAt = 0;
+
+/** true cuando ya pasó el tiempo de espera desde que se cerró la última sesión RA. */
+function useArCooldown(): boolean {
+  const [ready, setReady] = useState(() => Date.now() - lastArUnmountAt >= AR_REMOUNT_COOLDOWN_MS);
+  useEffect(() => {
+    if (ready) return;
+    const timer = setTimeout(() => setReady(true), AR_REMOUNT_COOLDOWN_MS - (Date.now() - lastArUnmountAt));
+    return () => clearTimeout(timer);
+  }, [ready]);
+  return ready;
 }
 
 export function ArCameraScreen() {
@@ -65,6 +83,10 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const tracking = useArSession((s) => s.tracking);
   const floorFound = useArSession((s) => s.floorY !== null);
   const hasFloor = useArSession((s) => s.floor !== null);
+  // Distancia horizontal (m, redondeada) a la que quedaría el personaje
+  const floorDistance = useArSession((s) =>
+    s.floor ? Math.round(Math.hypot(s.floor.point[0] - s.floor.camera[0], s.floor.point[2] - s.floor.camera[2]) * 2) / 2 : null,
+  );
   const placed = useArSession((s) => s.placement !== null);
   const modelStatus = useArSession((s) => s.modelStatus);
   const occlusion = useArSession((s) => s.occlusion);
@@ -74,6 +96,16 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const current = region.simulations.find((s) => s.id === active.simulationId);
   const { phase, lastTurn, error, viseme } = conversation;
   const hasObjects = active.objects.length > 0;
+
+  const cooledDown = useArCooldown();
+  const arMounted = focused && cooledDown && camera === "granted" && hasObjects && mic.status !== "checking";
+  // Anotamos cuándo se cerró la sesión RA para no reabrirla demasiado pronto
+  useEffect(() => {
+    if (!arMounted) return;
+    return () => {
+      lastArUnmountAt = Date.now();
+    };
+  }, [arMounted]);
 
   // Al salir de la pantalla la sesión AR se destruye: todo vuelve al estado inicial
   useEffect(() => () => arSession.reset(), []);
@@ -90,6 +122,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     // Solo en los cambios reales: un talk(false) al colocarlo pisaría el saludo inicial
     if (speaking === wasSpeaking.current) return;
     wasSpeaking.current = speaking;
+    if (__DEV__) console.log("[AR] lipsync", speaking ? "empieza a hablar" : "deja de hablar");
     arSession.talk(speaking);
   }, [speaking]);
   useEffect(() => {
@@ -109,7 +142,11 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     if (camera === "pending") return { title: "Preparando la cámara…", subtitle: "Acepta el permiso si te lo pide" };
     if (mic.status === "checking") return { title: "Preparando el micrófono…", subtitle: "Acepta el permiso si te lo pide" };
     if (!tracking) return { title: "Escaneando el entorno…", subtitle: "Mueve el teléfono despacio" };
-    if (hasFloor) return { title: "Simulación alineada", subtitle: "Toca para comenzar la experiencia" };
+    if (hasFloor)
+      return {
+        title: `Simulación alineada · a ${String(floorDistance).replace(".", ",")} m`,
+        subtitle: "Inclina el teléfono para acercarla o alejarla y toca para comenzar",
+      };
     if (!floorFound)
       return { title: "Escaneando el piso…", subtitle: "Apunta al piso y mueve el teléfono de lado a lado" };
     return { title: "Apunta la cámara al piso", subtitle: "Busca una zona despejada a 1 o 2 metros" };
@@ -131,7 +168,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
       {/* ARKit/ARCore arranca recién cuando el permiso del micrófono está resuelto: el diálogo del
           sistema pone la app en "inactive" y, si aparece mientras la sesión AR inicializa, el
           rastreo puede no volver a reportarse (se queda en "Escaneando el entorno…") */}
-      {focused && camera === "granted" && hasObjects && mic.status !== "checking" && (
+      {arMounted && (
         <ViroARSceneNavigator
           autofocus
           initialScene={{ scene: VistaARScene }}
