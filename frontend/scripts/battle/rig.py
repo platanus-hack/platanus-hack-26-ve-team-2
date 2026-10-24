@@ -137,6 +137,10 @@ class Track:
     def times(self) -> list[float]:
         return [k[0] for k in self.keys]
 
+    def clear(self, t0: float, t1: float) -> None:
+        """Quita los keys con t0 < t <= t1 (los reemplaza la simulación física)."""
+        self.keys = [k for k in self.keys if not t0 < k[0] <= t1 + 1e-6]
+
 
 class Rig:
     """Datos de reposo de un armature de Mixamo y la coreografía de su personaje."""
@@ -176,6 +180,8 @@ class Rig:
         self.feet: dict[str, Track] = {"l": Track(None), "r": Track(None)}
         self.overrides: list = []  # funciones (rig, t, des) que pisan matrices después del FK
         self.phase = 0.0
+        self.impulses: list[tuple[float, float]] = []
+        self.staggers: list[dict] = []
 
     # --- coreografía -------------------------------------------------------------------------
 
@@ -184,7 +190,15 @@ class Rig:
         "spine": (0.0, 0.0, 0.0), "head": (0.0, 0.0, 0.0),
         "rh": None, "lh": None, "sword": False, "gait": None,
         "blade": F(0.6, 0, -0.8), "edge": F(0.8, 0, 0.6),
+        "lean": 0.0,
     }
+
+    # Torso como resorte amortiguado: un golpe le da velocidad angular y vuelve solo a su pose
+    LEAN_FREQ = 1.4  # Hz
+    LEAN_DAMPING = 0.45
+    # Altura del centro de masa para el capture point (m) y duración de cada paso (s)
+    COM_HEIGHT = 0.9
+    STEP_TIME = 0.2
 
     def track(self, name: str) -> Track:
         if name not in self.tracks:
@@ -213,6 +227,99 @@ class Rig:
                 foot_yaw = yaw + k["feet"].get(s + "yaw", 0.0)
                 self.feet[s].add(t, (Vector((x + w.x, y + w.y, 0)), foot_yaw), e)
 
+    # --- física ---------------------------------------------------------------------------------
+
+    def impulse(self, t: float, deg_per_s: float) -> None:
+        """Golpe en el torso: negativo lo echa hacia atrás. Se suma a la inclinación de la coreografía."""
+        self.impulses.append((t, deg_per_s))
+
+    def stagger(self, t0: float, t1: float, distance: float, kick: float = -280.0) -> None:
+        """Retroceso por un empujón entre t0 y t1: el torso se va hacia atrás primero (impulso), el
+        cuerpo sale con velocidad y frena por fricción, y los pies dan los pasos necesarios para no
+        caerse (capture point). Recorre `distance` m hacia atrás de donde mira en t0."""
+        self.impulse(t0, kick)
+        self.staggers.append({"t0": t0, "t1": t1, "distance": distance})
+
+    def simulate(self, duration: float) -> None:
+        for st in self.staggers:
+            self._simulate_stagger(**st)
+        self._simulate_lean(duration)
+
+    def _simulate_stagger(self, t0: float, t1: float, distance: float) -> None:
+        dt = 1.0 / FPS
+        # Parte de donde estaba quieto al recibir el golpe (el último key de posición antes de t0)
+        def held(name: str) -> float:
+            keys = [k for k in self.track(name).keys if k[0] <= t0 + 1e-6]
+            return keys[-1][1] if keys else self.DEFAULTS[name]
+
+        x0, y0, yaw = held("x"), held("y"), self.num("yaw", t0)
+        back = Vector((-math.sin(math.radians(yaw)), math.cos(math.radians(yaw)), 0))
+        # Desplazamiento con frenado exponencial (fricción): v(t) = v0·e^(-t/τ), normalizado para
+        # llegar exacto a `distance` en t1 y empalmar con los keys que siguen
+        # τ = ventana/2.2: arranca a ~2,5 m/s y casi se detiene al final de la ventana
+        tau = (t1 - t0) / 2.2
+        norm = 1 - math.exp(-(t1 - t0) / tau)
+
+        def root(t: float) -> Vector:
+            u = (1 - math.exp(-(min(max(t, t0), t1) - t0) / tau)) / norm
+            return Vector((x0, y0, 0)) + back * (distance * u)
+
+        feet = {s: self.planted_foot(t0, s) for s in ("l", "r")}
+        for name in ("x", "y"):
+            self.track(name).clear(t0, t1)
+        for s in ("l", "r"):
+            self.feet[s].clear(t0, t1)
+            self.feet[s].add(t0, (feet[s][0].copy(), feet[s][2]), "io")
+        pos = {s: feet[s][0].copy() for s in ("l", "r")}
+        yaws = {s: feet[s][2] for s in ("l", "r")}
+
+        capture = math.sqrt(self.COM_HEIGHT / 9.8)
+        side = Vector((-back.y, back.x, 0))
+        busy_until = t0
+        n = int(round((t1 - t0) * FPS))
+        for i in range(n + 1):
+            t = t0 + i * dt
+            p = root(t)
+            self.track("x").add(t, p.x, "lin")
+            self.track("y").add(t, p.y, "lin")
+            if t < busy_until or t + self.STEP_TIME > t1 + 0.15:
+                continue
+            land = t + self.STEP_TIME
+            v = (root(land + dt) - root(land)) / dt
+            # Donde tendría que pisar al aterrizar el paso para frenar (capture point)
+            cp = root(land) + v * capture
+            lead = max(pos[s].dot(back) for s in pos)
+            if cp.dot(back) < lead - 0.02 or v.length < 0.15:
+                continue
+            # Da el paso con el pie que quedó adelante (el de atrás ya está del lado al que va)
+            s = min(pos, key=lambda k: pos[k].dot(back))
+            lateral = math.copysign(0.11, (pos[s] - p).dot(side))
+            target = cp + back * 0.06 + side * lateral
+            target.z = 0
+            self.feet[s].add(t, (pos[s].copy(), yaws[s]), "io")
+            self.feet[s].add(land, (target, yaws[s]), "io")
+            pos[s] = target
+            busy_until = land
+
+    def _simulate_lean(self, duration: float) -> None:
+        w = 2 * math.pi * self.LEAN_FREQ
+        z = self.LEAN_DAMPING
+        sub = 8
+        dt = 1.0 / FPS / sub
+        theta = vel = 0.0
+        pending = sorted(self.impulses)
+        track = self.track("lean")
+        for f in range(int(round(duration * FPS)) + 1):
+            t = f / FPS
+            for k in range(sub):
+                tk = t + k * dt
+                while pending and pending[0][0] <= tk:
+                    vel += pending.pop(0)[1]
+                acc = -w * w * theta - 2 * z * w * vel
+                vel += acc * dt
+                theta += vel * dt
+            track.add(t, theta, "lin")
+
     def num(self, name: str, t: float) -> float:
         return self.track(name).value(t) if name in self.tracks else self.DEFAULTS[name]
 
@@ -220,6 +327,10 @@ class Rig:
         st = {n: self.num(n, t) for n in ("x", "y", "dz", "yaw", "pitch", "roll", "scale")}
         for n in ("spine", "head"):
             st[n] = self.track(n).value(t, lerp3)
+        # La inclinación por golpes se reparte entre la cadera y la columna (el pecho cede más)
+        lean = self.num("lean", t)
+        st["pitch"] += 0.5 * lean
+        st["spine"] = (st["spine"][0] + 0.8 * lean, *st["spine"][1:])
         st["blade"] = self.track("blade").value(t, nlerp)
         st["edge"] = self.track("edge").value(t, nlerp)
         st["sword"] = self.track("sword").step(t)
@@ -385,6 +496,7 @@ class Rig:
     # --- horneado -----------------------------------------------------------------------------
 
     def bake(self, action_name: str, duration: float) -> bpy.types.Action:
+        self.simulate(duration)
         frames = int(round(duration * FPS)) + 1
         dt = 1.0 / FPS
         self.phase = 0.0

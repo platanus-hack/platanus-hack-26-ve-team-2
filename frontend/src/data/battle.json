@@ -7,11 +7,11 @@
       "sound": "run_in"
     },
     {
-      "atMs": 900,
+      "atMs": 920,
       "sound": "draw"
     },
     {
-      "atMs": 1750,
+      "atMs": 1050,
       "sound": "draw"
     },
     {
@@ -51,7 +51,7 @@
       "sound": "push"
     },
     {
-      "atMs": 8119,
+      "atMs": 8270,
       "sound": "fall"
     },
     {

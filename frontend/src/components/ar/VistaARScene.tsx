@@ -150,6 +150,7 @@ export function VistaARScene() {
   const sizeScale = useArSession((s) => s.sizeScale);
   const size = (placement?.autoScale ?? 1) * sizeScale;
   const battle = useArSession((s) => s.battle);
+  const preload = useArSession((s) => s.preload);
   const choreography = useArSession((s) => s.choreography);
   // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
   const host = objects.find((o): o is DynamicSceneObject => o.kind === "dynamic");
@@ -600,8 +601,13 @@ export function VistaARScene() {
         ? settledPose
         : initialPose(placement.id, host)
       : null;
-  const anchor = pose ?? battleAnchor;
-  const shadowAt: Vec3 = anchor ? [anchor.x, anchor.y, anchor.z] : [0, 0, 0];
+  // Escenario: un nodo en la pose del anfitrión. Lleva al anfitrión, a los personajes precargados
+  // (ocultos) y, en la batalla, a todos. Cambiar de simulación no cambia el árbol: Viro no desmonta
+  // ni vuelve a cargar ningún modelo
+  const stage = pose ?? battleAnchor;
+  const onStage = (obj: SceneObject) => !!stage && (battle !== "off" || obj.id === movableHost?.id);
+  const preloaded = preload.filter((p) => !objects.some((o) => o.id === p.id));
+  const shadowAt: Vec3 = stage ? [stage.x, stage.y, stage.z] : [0, 0, 0];
 
   return (
     <ViroARScene
@@ -653,30 +659,42 @@ export function VistaARScene() {
             shadowNearZ={2}
             shadowFarZ={7}
           />
-          {battleAnchor && choreography ? (
-            // A la altura del piso donde quedó el anfitrión (si se lo llevó tocando el piso, ver HostPose)
-            <ViroNode position={[battleAnchor.x, battleAnchor.y, battleAnchor.z]} rotation={[0, battleAnchor.yaw, 0]}>
-              {objects.map((obj) => (
-                <SceneModel
-                  key={obj.id}
-                  obj={obj}
-                  isHost={obj.id === hostId}
-                  hostAnimation={animation}
-                  onTap={onHostTap}
-                  size={size}
-                  battle={battle}
-                  battleAnimation={choreography.animation}
-                />
-              ))}
-              {battle === "finished" && <Balloons />}
+          {stage && (
+            // El nodo lleva la pose que mueven el seguimiento y el modo "mover" (a la altura del piso donde
+            // quedó, ver HostPose); los modelos quedan en su origen. Una sola lista con keys estables: un
+            // personaje que pasa de precargado a activo conserva su instancia
+            <ViroNode ref={hostNode} position={[stage.x, stage.y, stage.z]} rotation={[0, stage.yaw, 0]}>
+              {[
+                ...objects.filter(onStage).map((obj) => (
+                  <SceneModel
+                    key={obj.id}
+                    obj={atOrigin(obj)}
+                    isHost={obj.id === hostId}
+                    hostAnimation={animation}
+                    onTap={onHostTap}
+                    size={size}
+                    battle={battle}
+                    battleAnimation={choreography?.animation}
+                  />
+                )),
+                ...preloaded.map((obj) => (
+                  <SceneModel
+                    key={obj.id}
+                    obj={atOrigin(obj)}
+                    isHost={false}
+                    hostAnimation={animation}
+                    onTap={onHostTap}
+                    size={size}
+                    preloadOnly
+                  />
+                )),
+                ...(battle === "finished" ? [<Balloons key="globos" />] : []),
+              ]}
             </ViroNode>
-          ) : objects.map((obj) =>
-            pose && movableHost && obj.id === movableHost.id ? (
-              // El nodo lleva la pose que mueven el seguimiento y el modo "mover"; el modelo queda en su origen
-              <ViroNode key={obj.id} ref={hostNode} position={[pose.x, pose.y, pose.z]} rotation={[0, pose.yaw, 0]}>
-                <SceneModel obj={atOrigin(movableHost)} isHost hostAnimation={animation} onTap={onHostTap} size={size} />
-              </ViroNode>
-            ) : (
+          )}
+          {objects
+            .filter((obj) => !onStage(obj))
+            .map((obj) => (
               <SceneModel
                 key={obj.id}
                 obj={obj}
@@ -685,8 +703,7 @@ export function VistaARScene() {
                 onTap={onHostTap}
                 size={size}
               />
-            ),
-          )}
+            ))}
           {editing && pose && (
             <ViroPolygon
               ref={editRing}
@@ -703,8 +720,8 @@ export function VistaARScene() {
             ref={shadow}
             position={shadowAt}
             rotation={[-90, 0, 0]}
-            width={battleAnchor ? 6 : 3}
-            height={battleAnchor ? 6 : 3}
+            width={battle !== "off" ? 6 : 3}
+            height={battle !== "off" ? 6 : 3}
             arShadowReceiver
           />
         </ViroNode>
@@ -724,9 +741,20 @@ type SceneModelProps = {
   battle?: ArSessionState["battle"];
   /** Animación de la coreografía que reproducen los que no son el anfitrión */
   battleAnimation?: string;
+  /** Personaje de otra simulación: se carga oculto para que aparezca al instante al cambiar */
+  preloadOnly?: boolean;
 };
 
-function SceneModel({ obj, isHost, hostAnimation, onTap, size, battle = "off", battleAnimation }: SceneModelProps) {
+function SceneModel({
+  obj,
+  isHost,
+  hostAnimation,
+  onTap,
+  size,
+  battle = "off",
+  battleAnimation,
+  preloadOnly = false,
+}: SceneModelProps) {
   const entrance = obj.kind === "dynamic" ? obj.entrance : undefined;
   const [loaded, setLoaded] = useState(false);
   const model = useRef<Viro3DObject>(null);
@@ -748,7 +776,9 @@ function SceneModel({ obj, isHost, hostAnimation, onTap, size, battle = "off", b
 
   const loop = obj.kind === "dynamic" && obj.animation;
   const inBattle = battle !== "off";
-  const modelAnimation = isHost
+  const modelAnimation = preloadOnly
+    ? undefined
+    : isHost
     ? // Saluda (al aparecer y al tocarlo) y gesticula al hablar; sin animación de reposo se queda en la pose final.
       // En la batalla arranca con `playBattle`
       hostAnimation
@@ -777,7 +807,7 @@ function SceneModel({ obj, isHost, hostAnimation, onTap, size, battle = "off", b
         animation={modelAnimation}
         // Antes de arrancar la batalla los demás no se ven (estarían en pose de reposo encima del
         // anfitrión), y al terminar el anfitrión ya se fue corriendo
-        visible={!inBattle || (isHost ? battle !== "finished" : battle !== "waiting")}
+        visible={!preloadOnly && (!inBattle || (isHost ? battle !== "finished" : battle !== "waiting"))}
         onClick={isHost && !inBattle ? onTap : undefined}
         onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
         onLoadEnd={() => {
@@ -805,7 +835,7 @@ function SceneModel({ obj, isHost, hostAnimation, onTap, size, battle = "off", b
 }
 
 /** El mismo objeto sin posición en el piso ni giro en Y: los pone el nodo que lo contiene. */
-function atOrigin(obj: DynamicSceneObject): DynamicSceneObject {
+function atOrigin<T extends SceneObject>(obj: T): T {
   const [rx, , rz] = obj.transform.rotation;
   return {
     ...obj,

@@ -12,6 +12,7 @@ import { type ActiveSimulation, useActiveSimulation } from "@/contexts/ActiveSim
 import { arSession, useArSession } from "@/hooks/useArSession";
 import { useBattleDirector } from "@/hooks/useBattleDirector";
 import { useMicrophonePermission } from "@/hooks/useMicrophonePermission";
+import { getSimulationChoreography, getSimulationObjects } from "@/data/simulationObjects";
 import { requestStartupPermissions } from "@/hooks/useStartupPermissions";
 import { useSimulationConversation } from "@/hooks/useSimulationConversation";
 import { useStartSimulation } from "@/hooks/useStartSimulation";
@@ -131,6 +132,15 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     arSession.loadObjects(active.objects, active.choreography ?? null);
   }, [active.objects, active.choreography]);
 
+  // Los personajes de las otras simulaciones de la región se cargan ocultos desde ya: al cambiar de
+  // simulación aparecen al instante
+  useEffect(() => {
+    arSession.setPreload(region.simulations.flatMap((s) => getSimulationObjects(s.id) ?? []));
+  }, [region, active.objects]);
+
+  // Simulación pedida más recientemente: una respuesta vieja de la API no la pisa
+  const requested = useRef(active.simulationId);
+
   // Mientras habla, gesticula
   const speaking = phase === "speaking";
   const wasSpeaking = useRef(false);
@@ -151,8 +161,15 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   async function switchSimulation(simulationId: string) {
     setScenesOpen(false);
     if (simulationId === active.simulationId) return;
+    requested.current = simulationId;
+    // Los objetos y la coreografía viven en el teléfono: se cambia al instante, sin esperar a la API
+    const objects = getSimulationObjects(simulationId);
+    if (objects) {
+      setActive({ ...active, simulationId, objects, choreography: getSimulationChoreography(simulationId) });
+    }
+    // La API confirma la simulación (y su contexto de voz); si falla, se queda la versión local
     const loaded = await start(region.id, simulationId);
-    if (loaded) setActive({ ...loaded, region });
+    if (loaded && requested.current === simulationId) setActive({ ...loaded, region });
   }
 
   const status = (() => {
