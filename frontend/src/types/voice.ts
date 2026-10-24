@@ -59,3 +59,12 @@ export interface AudioFile {
   name: string;
   type: string;
 }
+
+/** Respuesta de POST /simulations/{id}/ask (espejo de backend/app/schemas/simulation.py). */
+export interface SimulationTurn extends Turn {
+  /** Envíalo en la próxima pregunta para conservar el hilo de la conversación */
+  session_id: string;
+  simulation_id: string;
+  character_id: string;
+  character_name: string;
+}

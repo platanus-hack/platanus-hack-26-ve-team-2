@@ -1,10 +1,16 @@
-import Svg, { Defs, LinearGradient, Polygon, Stop } from "react-native-svg";
+import Svg, { Defs, Ellipse, LinearGradient, Polygon, Stop } from "react-native-svg";
 
 const points =
   "35,0 65,0 72,9 67,19 76,28 84,60 70,64 68,100 48,100 44,67 26,100 10,96 31,57 20,32 34,19 29,8";
 
+type Props = {
+  active: boolean;
+  /** 0 = boca cerrada, 1 = máxima apertura (lipsync) */
+  mouthOpen?: number;
+};
+
 // Silueta del personaje histórico (placeholder hasta tener el modelo AR)
-export function FigureSilhouette({ active }: { active: boolean }) {
+export function FigureSilhouette({ active, mouthOpen = 0 }: Props) {
   const width = active ? 118 : 105;
   const height = active ? 280 : 250;
   return (
@@ -16,6 +22,7 @@ export function FigureSilhouette({ active }: { active: boolean }) {
         </LinearGradient>
       </Defs>
       <Polygon points={points} fill="url(#figure)" />
+      {mouthOpen > 0 && <Ellipse cx={50} cy={13} rx={5} ry={0.4 + mouthOpen * 2.2} fill="#f3d3a8" opacity={0.9} />}
     </Svg>
   );
 }

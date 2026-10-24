@@ -5,25 +5,15 @@ Flujo de la app: GET /regions → dibuja los polígonos → el usuario elige una
 objetos 3D locales y arranca la escena.
 """
 
-from functools import lru_cache
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, HTTPException, status
 
+from app.api.deps import SimulationDep
 from app.schemas.region import RegionOut, SimulationStartIn, SimulationStartOut
 from app.simulations.errors import SimulationError
-from app.simulations.repository import InMemoryRegionRepository
-from app.simulations.service import SimulationService
 
 router = APIRouter(prefix="/regions", tags=["regions"])
-
-
-@lru_cache
-def get_simulation_service() -> SimulationService:
-    return SimulationService(InMemoryRegionRepository())
-
-
-SimulationDep = Annotated[SimulationService, Depends(get_simulation_service)]
 
 
 @router.get("", response_model=list[RegionOut])

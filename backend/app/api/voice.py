@@ -144,26 +144,26 @@ async def create_session(payload: SessionCreate, service: VoiceDep) -> SessionOu
     )
 
 
-@router.post("/sessions/{session_id}/turns", response_model=TurnOut)
-async def create_turn(
-    session_id: str,
-    service: VoiceDep,
-    audio: Annotated[UploadFile | None, File(description="Grabación del visitante")] = None,
-    text: Annotated[str | None, Form(max_length=2000, description="Alternativa al audio")] = None,
-) -> TurnOut:
-    """Un turno: audio (multipart) o texto -> transcripción, respuesta y audio con visemas."""
-    session = _session_or_404(service, session_id)
-    audio_in = None
-    if audio is not None:
-        limit = service.limits.max_audio_bytes
-        data = await audio.read(limit + 1)
-        if len(data) > limit:
-            raise InvalidInputError(f"Audio demasiado grande (máx. {limit // 1024} KB)")
-        audio_in = AudioInput(data, _normalize_mime(audio.content_type), audio.filename or "audio")
+async def read_audio(upload: UploadFile, service: ConversationService) -> AudioInput:
+    """Lee el multipart con tope de tamaño y valida el formato."""
+    limit = service.limits.max_audio_bytes
+    data = await upload.read(limit + 1)
+    if len(data) > limit:
+        raise InvalidInputError(f"Audio demasiado grande (máx. {limit // 1024} KB)")
+    return AudioInput(data, _normalize_mime(upload.content_type), upload.filename or "audio")
 
+
+async def collect_turn(
+    service: ConversationService,
+    session: VoiceSession,
+    *,
+    audio: AudioInput | None = None,
+    text: str = "",
+) -> TurnOut:
+    """Ejecuta un turno completo y agrega sus eventos en una sola respuesta REST."""
     t0 = time.perf_counter()
     transcript, reply, speech, timings = None, "", None, {}
-    async for event in service.run_turn(session, audio=audio_in, text=text or ""):
+    async for event in service.run_turn(session, audio=audio, text=text):
         match event:
             case TranscriptEvent():
                 transcript, timings["stt"] = event.text, event.elapsed_ms
@@ -181,6 +181,19 @@ async def create_turn(
         speech=SpeechOut.from_event(speech),
         timings_ms=timings,
     )
+
+
+@router.post("/sessions/{session_id}/turns", response_model=TurnOut)
+async def create_turn(
+    session_id: str,
+    service: VoiceDep,
+    audio: Annotated[UploadFile | None, File(description="Grabación del visitante")] = None,
+    text: Annotated[str | None, Form(max_length=2000, description="Alternativa al audio")] = None,
+) -> TurnOut:
+    """Un turno: audio (multipart) o texto -> transcripción, respuesta y audio con visemas."""
+    session = _session_or_404(service, session_id)
+    audio_in = await read_audio(audio, service) if audio is not None else None
+    return await collect_turn(service, session, audio=audio_in, text=text or "")
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

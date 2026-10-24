@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, regions, voice, zones
+from app.api import health, regions, simulations, voice, zones
 from app.core.config import get_settings
 from app.voice.errors import VoiceError
 from app.voice.registry import build_conversation_service
@@ -44,4 +44,5 @@ app.add_exception_handler(VoiceError, voice.voice_error_handler)
 app.include_router(health.router)
 app.include_router(zones.router)
 app.include_router(regions.router)
+app.include_router(simulations.router)
 app.include_router(voice.router)

@@ -23,6 +23,8 @@ class VoiceSession:
     location_id: str
     character_id: str
     history: deque[ChatMessage]
+    # Contexto del sitio para el system prompt; None = el de la ubicación en personas.yaml.
+    context: str | None = None
     last_seen: float = field(default_factory=time.monotonic)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # un turno a la vez por sesión
 
@@ -41,7 +43,9 @@ class SessionStore:
     def ttl_s(self) -> int:
         return self._ttl_s
 
-    async def create(self, location_id: str, character_id: str) -> VoiceSession:
+    async def create(
+        self, location_id: str, character_id: str, context: str | None = None
+    ) -> VoiceSession:
         await self.purge_expired()
         while len(self._sessions) >= self._max:
             oldest_id = next(iter(self._sessions))
@@ -51,6 +55,7 @@ class SessionStore:
             location_id=location_id,
             character_id=character_id,
             history=deque(maxlen=self._history_len),
+            context=context,
         )
         self._sessions[session.id] = session
         return session

@@ -54,6 +54,9 @@ class PersonaCatalog:
                 f"Personaje '{character_id}' no existe en '{location_id}'"
             ) from None
 
-    def system_prompt(self, loc: Location, char: Character) -> str:
+    def system_prompt(self, loc: Location, char: Character, context: str | None = None) -> str:
+        """`context` reemplaza el contexto de la ubicación (p. ej. el prompt de una simulación)."""
         others = [c.name for c in loc.characters.values() if c.id != char.id]
-        return self._template.render(location=loc, character=char, others=others)
+        return self._template.render(
+            location=loc, character=char, others=others, context=context or loc.context
+        )

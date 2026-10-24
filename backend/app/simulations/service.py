@@ -1,4 +1,4 @@
-from app.simulations.domain import Region, SimulationStart
+from app.simulations.domain import Region, Simulation, SimulationStart
 from app.simulations.errors import RegionNotFoundError, SimulationNotFoundError
 from app.simulations.repository import RegionRepository
 
@@ -9,6 +9,12 @@ class SimulationService:
 
     def list_regions(self) -> list[Region]:
         return self._regions.list()
+
+    def get_simulation(self, simulation_id: str) -> Simulation:
+        simulation = self._regions.find_simulation(simulation_id)
+        if simulation is None:
+            raise SimulationNotFoundError(f"Simulación '{simulation_id}' no existe")
+        return simulation
 
     def start(self, region_id: str, simulation_id: str | None = None) -> SimulationStart:
         """Resuelve qué simulación arranca en la región (la indicada o la por defecto).

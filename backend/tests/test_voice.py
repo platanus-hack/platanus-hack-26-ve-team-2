@@ -6,75 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import main
-from app.core.config import get_settings
 from app.voice.lipsync import to_visemes
-from app.voice.personas import PersonaCatalog
-from app.voice.ports import (
-    AudioInput,
-    CharTiming,
-    ChatRequest,
-    LanguageModel,
-    SpeechAudio,
-    SpeechToText,
-    TextToSpeech,
-)
-from app.voice.service import ConversationService, VoiceLimits
+from app.voice.ports import CharTiming
 from app.voice.sessions import SessionStore
 from app.voice.text import clean_for_tts, sanitize_user_text
-
-
-class FakeSTT(SpeechToText):
-    name = "fake"
-
-    async def transcribe(self, audio: AudioInput, language: str, keyterms: list[str]) -> str:
-        return "hola que tal"
-
-
-class FakeLLM(LanguageModel):
-    name = "fake"
-
-    def __init__(self) -> None:
-        self.requests: list[ChatRequest] = []
-        self.closed: list[str] = []
-
-    async def generate(self, request: ChatRequest) -> str:
-        self.requests.append(request)
-        return "*sonríe* Todo bien, aquí recordando Carabobo. ¿Quieres verlo?"
-
-    async def close_session(self, session_id: str) -> None:
-        self.closed.append(session_id)
-
-
-class FakeTTS(TextToSpeech):
-    name = "elevenlabs"  # reutiliza los voice_id de personas.yaml
-
-    async def synthesize(self, text: str, voice_id: str, language: str) -> SpeechAudio:
-        timings = [CharTiming(c, i * 0.05, (i + 1) * 0.05) for i, c in enumerate(text)]
-        return SpeechAudio(b"ID3fake-mp3", "audio/mpeg", timings)
-
-
-@pytest.fixture
-def llm() -> FakeLLM:
-    return FakeLLM()
-
-
-@pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch, llm: FakeLLM):
-    monkeypatch.setattr(main.settings, "voice_enabled", False)  # no tocar ElevenLabs
-    settings = get_settings()
-    service = ConversationService(
-        stt=FakeSTT(),
-        llm=llm,
-        tts=FakeTTS(),
-        catalog=PersonaCatalog.from_yaml(settings.voice_personas_file),
-        sessions=SessionStore(
-            ttl_s=60, max_sessions=10, history_turns=3, on_evict=llm.close_session
-        ),
-        limits=VoiceLimits(language="es", max_audio_bytes=1024, max_text_chars=100),
-    )
-    with TestClient(main.app) as c:
-        main.app.state.voice = service
-        yield c
+from tests.fakes import FakeLLM
 
 
 def _start(client: TestClient, character: str = "bolivar") -> dict:

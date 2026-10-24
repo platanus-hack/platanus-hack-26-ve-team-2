@@ -5,29 +5,46 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { CameraShade, FigureSilhouette, SimulationsSheet } from "@/components/ar";
-import { CircleButton, Icon, PrimaryButton, PrimaryLabel, StatusRow } from "@/components/common";
-import { useActiveSimulation } from "@/contexts/ActiveSimulationContext";
+import {
+  CameraShade,
+  FigureSilhouette,
+  MicPermissionPrompt,
+  PushToTalkButton,
+  SimulationsSheet,
+} from "@/components/ar";
+import { CircleButton, Icon, StatusRow } from "@/components/common";
+import { type ActiveSimulation, useActiveSimulation } from "@/contexts/ActiveSimulationContext";
+import { useMicrophonePermission } from "@/hooks/useMicrophonePermission";
+import { useSimulationConversation } from "@/hooks/useSimulationConversation";
 import { useStartSimulation } from "@/hooks/useStartSimulation";
 import { colors, fonts } from "@/theme";
+import { mouthOpenness } from "@/utils/lipsync";
+
+export function ArCameraScreen() {
+  const { active } = useActiveSimulation();
+  // Se llega aquí solo desde "Comenzar simulación"; sin simulación activa no hay escena que montar
+  if (!active) return <Redirect href="/" />;
+  return <ArSimulationView active={active} />;
+}
 
 // Vista previa estática: la cámara AR real (Viro) montará `active.objects` más adelante
-export function ArCameraScreen() {
+function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const insets = useSafeAreaInsets();
-  const { active, setActive } = useActiveSimulation();
+  const { setActive } = useActiveSimulation();
   const { start } = useStartSimulation();
+  // Lo primero al entrar a la simulación: pedir el micrófono
+  const mic = useMicrophonePermission();
+  const conversation = useSimulationConversation(active.simulationId);
   const [started, setStarted] = useState(false);
   const [scenesOpen, setScenesOpen] = useState(false);
 
-  // Se llega aquí solo desde "Comenzar simulación"; sin simulación activa no hay escena que montar
-  if (!active) return <Redirect href="/" />;
-
   const { region } = active;
   const current = region.simulations.find((s) => s.id === active.simulationId);
+  const { phase, lastTurn, error } = conversation;
 
   async function switchSimulation(simulationId: string) {
     setScenesOpen(false);
-    if (simulationId === active?.simulationId) return;
+    if (simulationId === active.simulationId) return;
     const loaded = await start(region.id, simulationId);
     if (loaded) setActive({ ...loaded, region });
   }
@@ -55,7 +72,7 @@ export function ArCameraScreen() {
         </CircleButton>
       </View>
 
-      <View style={[styles.stage, { top: insets.top + 90, bottom: insets.bottom + 190 }]}>
+      <View style={[styles.stage, { top: insets.top + 90, bottom: insets.bottom + 230 }]}>
         {!started ? (
           <>
             <View style={styles.direction}>
@@ -74,11 +91,15 @@ export function ArCameraScreen() {
           </>
         ) : (
           <View style={styles.figure}>
-            <FigureSilhouette active />
-            <View style={styles.speech}>
-              <Text style={styles.speechName}>Simón Bolívar</Text>
-              <Text style={styles.speechText}>“Esta plaza vio nacer una república...”</Text>
-            </View>
+            <FigureSilhouette active mouthOpen={mouthOpenness(conversation.viseme)} />
+            {(lastTurn || phase === "sending") && (
+              <View style={styles.speech}>
+                <Text style={styles.speechName}>{lastTurn?.character_name ?? "…"}</Text>
+                <Text style={styles.speechText}>
+                  {phase === "sending" ? "…" : `“${lastTurn?.reply_text}”`}
+                </Text>
+              </View>
+            )}
           </View>
         )}
       </View>
@@ -104,12 +125,28 @@ export function ArCameraScreen() {
             <View style={styles.sceneLabel}>
               <Text style={styles.nowPlaying}>REPRODUCIENDO</Text>
               <Text style={styles.sceneTitle}>{current?.title ?? region.name}</Text>
-              <Text style={styles.remaining}>Quedan 02:14</Text>
+              <Text style={[styles.remaining, error && styles.error]} numberOfLines={2}>
+                {error ?? (lastTurn?.transcript ? `Tú: “${lastTurn.transcript}”` : "Pregúntale lo que quieras")}
+              </Text>
             </View>
-            <PrimaryButton onPress={() => setScenesOpen(true)}>
-              <Icon name="layers" color="white" />
-              <PrimaryLabel>Ver simulaciones disponibles</PrimaryLabel>
-            </PrimaryButton>
+
+            {mic.status === "granted" ? (
+              <View style={styles.talkRow}>
+                <View style={styles.side} />
+                <PushToTalkButton
+                  phase={phase}
+                  onPressIn={conversation.startTalking}
+                  onPressOut={conversation.stopTalking}
+                />
+                <View style={styles.side}>
+                  <CircleButton label="Ver simulaciones disponibles" variant="glass" onPress={() => setScenesOpen(true)}>
+                    <Icon name="layers" color="white" />
+                  </CircleButton>
+                </View>
+              </View>
+            ) : (
+              <MicPermissionPrompt status={mic.status} onRequest={mic.request} />
+            )}
           </>
         )}
       </View>
@@ -125,7 +162,6 @@ export function ArCameraScreen() {
     </View>
   );
 }
-
 
 const glass = {
   backgroundColor: "rgba(19,33,27,0.6)",
@@ -209,4 +245,7 @@ const styles = StyleSheet.create({
   nowPlaying: { color: "#f4b47f", fontSize: 9, letterSpacing: 1.3, fontFamily: fonts.bold },
   sceneTitle: { color: "white", fontFamily: fonts.displayBold, fontSize: 17, marginTop: 3 },
   remaining: { color: "#c6cec9", fontSize: 11, fontFamily: fonts.regular, marginTop: 3 },
+  error: { color: "#f4b47f" },
+  talkRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  side: { width: 44, marginTop: 20 },
 });

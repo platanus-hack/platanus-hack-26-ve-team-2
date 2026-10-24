@@ -20,6 +20,8 @@ class Simulation:
     prompt: str
     # Ubicación de personas.yaml cuyos personajes conversan en esta simulación.
     voice_location_id: str
+    # Personaje que responde las preguntas del visitante (voz y personalidad de personas.yaml).
+    character_id: str
 
 
 @dataclass(frozen=True, slots=True)
