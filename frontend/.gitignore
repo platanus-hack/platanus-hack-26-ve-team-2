@@ -43,3 +43,8 @@ example
 /android
 
 .env
+
+!.env.example
+
+# Python (scripts de Blender)
+__pycache__/

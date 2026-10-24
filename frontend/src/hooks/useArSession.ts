@@ -21,6 +21,11 @@ export const MAX_SIZE_SCALE = 1.3;
 export type ArSessionState = {
   /** Objetos 3D de la simulación activa; se montan relativos al punto del piso elegido */
   objects: SceneObject[];
+  /**
+   * Personajes de las otras simulaciones de la región: se cargan ocultos de antemano para que al
+   * cambiar de simulación aparezcan al instante (cargar un GLB de varios MB tarda segundos)
+   */
+  preload: SceneObject[];
   tracking: boolean;
   /** Altura (y) del plano horizontal más bajo detectado: lo tratamos como el piso */
   floorY: number | null;
@@ -59,6 +64,7 @@ export type ArSessionState = {
 
 const initialState: ArSessionState = {
   objects: [],
+  preload: [],
   tracking: false,
   floorY: null,
   floor: null,
@@ -134,12 +140,18 @@ export const arSession = {
     const nextHost = host(objects);
     if (state.placement && prevHost && nextHost?.id === prevHost.id && nextHost.model === prevHost.model) {
       const wasBattle = state.battle !== "off";
-      // Entrar o salir de la batalla cambia el árbol de la escena: los modelos se vuelven a montar (y cargar)
-      if (wasBattle !== !!choreography) loadedModels.clear();
-      else for (const id of loadedModels) if (!objects.some((o) => o.id === id)) loadedModels.delete(id);
+      // Los personajes que salen de la escena pasan a precargados (ocultos pero cargados) en el mismo
+      // cambio: si quedaran un render fuera, Viro los desmontaría y habría que volver a cargarlos
+      const active = new Set(objects.map((o) => o.id));
+      const preload = [...state.preload, ...state.objects.filter((o) => o.kind === "dynamic")].filter(
+        (o, i, all) => !active.has(o.id) && all.findIndex((x) => x.id === o.id) === i,
+      );
+      const mounted = new Set([...objects, ...preload].map((o) => o.id));
+      for (const id of loadedModels) if (!mounted.has(id)) loadedModels.delete(id);
       // En la batalla no hay modo "mover": la coreografía decide dónde está cada uno
       set({
         objects,
+        preload,
         choreography,
         battle,
         walking: false,
@@ -154,6 +166,7 @@ export const arSession = {
     loadedModels.clear();
     set({
       objects,
+      preload: [],
       choreography,
       battle,
       floor: null,
@@ -165,6 +178,17 @@ export const arSession = {
       modelStatus: "idle",
     });
     setMouth(0);
+  },
+  /** Personajes a cargar ocultos (los de las otras simulaciones que no están en la actual) */
+  setPreload(objects: SceneObject[]) {
+    const active = new Set(state.objects.map((o) => o.id));
+    // Los que ya están precargados conservan su lugar (y su carga)
+    const preload = [
+      ...state.preload.filter((o) => !active.has(o.id)),
+      ...objects.filter((o) => o.kind === "dynamic" && !active.has(o.id) && !state.preload.some((p) => p.id === o.id)),
+    ];
+    const same = preload.length === state.preload.length && preload.every((o, i) => o === state.preload[i]);
+    if (!same) set({ preload });
   },
   /** Lo avisa cada modelo al terminar de cargar */
   markLoaded(id: string) {

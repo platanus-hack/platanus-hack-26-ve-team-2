@@ -217,8 +217,14 @@ def isolate_hat(body: bpy.types.Object) -> None:
     bm.free()
 
 
-def hat_override(body: bpy.types.Object, rig: Rig, toss_at: float, velocity: Vector):
-    """El bicornio sigue a la mano hasta `toss_at`; después vuela (parabólico) y queda en el piso."""
+def hat_override(body: bpy.types.Object, rig: Rig, toss_at: float, throw: Vector):
+    """El bicornio sigue a la mano hasta `toss_at`; después vuela (parabólico) y queda en el piso.
+    Sale con la velocidad del cuerpo (va corriendo) más la del lanzamiento."""
+    dt = 1 / 24
+    body_v = Vector(
+        ((rig.num("x", toss_at + dt) - rig.num("x", toss_at)) / dt, (rig.num("y", toss_at + dt) - rig.num("y", toss_at)) / dt, 0)
+    )
+    velocity = body_v + throw
     names = {g.index: g.name for g in body.vertex_groups}
     rest = rig.rest[HAT_BONE]
     inv = rest.inverted()
@@ -270,11 +276,20 @@ GUARD_EDGE = F(0.6, 0, -0.8)
 GUARD_OFFHAND = ("t", F(-0.05, 0.30, 1.15))
 SHEATH_BLADE = F(-0.3, 0.25, -0.9)
 
+# Monteverde llega en diagonal desde atrás a la izquierda de Bolívar (en la app: al fondo a la
+# derecha de quien mira), así entra en el cuadro de la cámara. Corre en línea recta hasta su guardia
+RUN_FROM = Vector((5.2, 4.2, 0))
+GUARD_AT = Vector((1.55, 0.0, 0))
+RUN_DIR = (GUARD_AT - RUN_FROM).normalized()
+# yaw de quien mira en la dirección d: adelante = (sin yaw, -cos yaw)
+RUN_YAW = math.degrees(math.atan2(RUN_DIR.x, -RUN_DIR.y))
+LOOK_AT_ARRIVAL = math.degrees(math.atan2(RUN_FROM.x, -RUN_FROM.y))
+
 # Sonidos (segundos desde que arranca la animación); la app los toma de src/data/battle.json
 CUES = [
     (0.0, "run_in"),
-    (0.9, "draw"),
-    (1.75, "draw"),
+    (0.92, "draw"),
+    (1.05, "draw"),
     (2.45, "cry"),
     (3.0, "clash_heavy"),
     (3.55, "clash"),
@@ -284,25 +299,38 @@ CUES = [
     (5.75, "push"),
     (7.0, "clash_heavy"),
     (7.3, "push"),
-    (8.12, "fall"),
+    (8.27, "fall"),
     (11.25, "run_away"),
 ]
+
+
+# Golpes que recibe cada uno: el torso cede hacia atrás y vuelve solo (resorte amortiguado).
+# (segundo, velocidad angular en °/s; negativo = hacia atrás)
+BOLIVAR_HITS = [(3.0, -75), (4.15, -60), (5.0, -30), (7.0, -95)]
+MONTEVERDE_HITS = [(3.55, -60), (4.75, -60), (5.0, -30)]
+# Empujones: (desde, hasta, metros que retrocede)
+MONTEVERDE_STAGGER = (5.75, 6.55, 0.9)
+BOLIVAR_STAGGER = (7.3, 7.95, 0.75)
 
 
 def bolivar_keys() -> list[dict]:
     return [
         dict(t=0.0, x=0.0, y=0.0, yaw=0, feet=NEUTRAL, sword=False, blade=SHEATH_BLADE, edge=F(1, 0, 0)),
-        dict(t=0.55, head=(0, 0, 0), spine=(0, 0, 0)),
-        # Escucha a Monteverde y lo mira (llega por su izquierda)
-        dict(t=0.85, head=(-4, 50, 0), spine=(0, 12, 0)),
-        dict(t=1.05, yaw=0),
-        dict(t=1.25, feet={"r": F(0.2, -0.12)}),
-        dict(t=1.45, yaw=90, head=(0, 0, 0), spine=(0, 0, 0), dz=-0.04, feet={"l": F(-0.24, 0.12), "lyaw": 45}),
+        # Apenas empieza oye a Monteverde: lo mira y se gira hacia donde viene (atrás a su izquierda)
+        dict(t=0.1, head=(0, 0, 0), spine=(0, 0, 0), yaw=0),
+        dict(t=0.3, head=(-4, 45, 0), spine=(0, 15, 0)),
+        dict(t=0.45, feet={"l": F(-0.06, 0.15), "lyaw": 45}),
+        dict(t=0.75, yaw=LOOK_AT_ARRIVAL, head=(0, 0, 0), spine=(0, 0, 0), dz=-0.04, feet={"r": F(0.30, -0.09)}),
+        dict(t=0.92, feet={"l": F(-0.24, 0.12), "lyaw": 45}),
         # Desenvaina: la mano derecha cruza a la cadera izquierda, la izquierda sujeta la vaina
-        dict(t=1.55, rh=("t", F(0.18, 0.13, 0.97)), lh=("t", F(0.06, 0.2, 0.93)), feet={"r": F(0.30, -0.09)}),
-        dict(t=1.75, sword=True),
-        dict(t=2.05, rh=("t", F(0.28, -0.05, 1.45)), blade=F(0.45, -0.35, 0.82), edge=F(0.8, 0, -0.5)),
-        dict(t=2.35, rh=GUARD_HAND, blade=GUARD_BLADE, edge=GUARD_EDGE, lh=GUARD_OFFHAND, dz=-0.07),
+        dict(t=0.85, rh=("t", F(0.18, 0.13, 0.97)), lh=("t", F(0.06, 0.2, 0.93))),
+        dict(t=1.05, sword=True),
+        dict(t=1.35, rh=("t", F(0.28, -0.05, 1.45)), blade=F(0.45, -0.35, 0.82), edge=F(0.8, 0, -0.5)),
+        dict(t=1.65, rh=GUARD_HAND, blade=GUARD_BLADE, edge=GUARD_EDGE, lh=GUARD_OFFHAND, dz=-0.07),
+        # En guardia, lo sigue mientras se acerca y queda de frente cuando llega
+        dict(t=1.9, yaw=LOOK_AT_ARRIVAL),
+        dict(t=2.3, yaw=90, feet={"r": F(0.30, -0.09)}),
+        dict(t=2.45, feet={"l": F(-0.24, 0.12), "lyaw": 45}),
         dict(t=2.8, rh=("t", F(0.33, -0.12, 1.25))),
         # 1) Bloqueo alto contra el tajo de arriba
         dict(t=3.0, rh=("t", F(0.30, -0.10, 1.62)), blade=F(0.15, 1.0, 0.12), edge=F(0, 0, 1), dz=-0.13, spine=(-4, 0, 0), e="in"),
@@ -330,16 +358,14 @@ def bolivar_keys() -> list[dict]:
         dict(t=6.8, dz=-0.1),
         # Bloquea el contraataque y le desvían el sable
         dict(t=7.0, x=0.3, rh=("t", F(0.30, 0.10, 1.35)), blade=F(0.3, 0.3, 0.9), edge=F(0, 1, 0), e="in"),
-        dict(t=7.12, rh=("t", F(0.08, -0.48, 1.0)), blade=F(0.1, -0.8, -0.3), edge=F(0, 0, 1), pitch=-8, spine=(-6, -15, 0), e="out"),
-        # Lo empujan: trastabilla hacia atrás y cae sentado
-        dict(t=7.3, x=0.3),
-        dict(t=7.45, feet={"r": F(-0.28, -0.1)}),
-        dict(t=7.62, feet={"l": F(-0.32, 0.12), "lyaw": 0}),
-        dict(t=7.75, x=-0.55, pitch=-22, spine=(-10, 0, 0), head=(-10, 0, 0), lh=("t", F(0.15, 0.45, 1.5)), rh=("t", F(0.1, -0.5, 1.35)), blade=F(0.2, -0.6, 0.75), dz=-0.1, e="out"),
-        dict(t=8.15, x=-0.85, dz=-0.76, pitch=-25, spine=(-15, 0, 0), head=(-5, 0, 0),
+        dict(t=7.12, rh=("t", F(0.08, -0.48, 1.0)), blade=F(0.1, -0.8, -0.3), edge=F(0, 0, 1), spine=(0, -15, 0), e="out"),
+        # Lo empujan (BOLIVAR_STAGGER): retrocede trastabillando, pierde el equilibrio y cae sentado
+        dict(t=7.3, x=0.3, lh=("t", F(0.15, 0.45, 1.5)), rh=("t", F(0.1, -0.5, 1.35)), blade=F(0.2, -0.6, 0.75)),
+        dict(t=7.95, pitch=-12, spine=(-6, 0, 0), head=(-6, 0, 0), dz=-0.1),
+        dict(t=8.3, x=-0.75, dz=-0.76, pitch=-25, spine=(-15, 0, 0), head=(-5, 0, 0),
              lh=("w", F(-0.2, 0.30, 0.06)), rh=("w", F(-0.15, -0.32, 0.08)), blade=F(0.5, -0.85, -0.3),
              feet={"l": F(0.62, 0.13), "r": F(0.60, -0.13), "lyaw": 0}, e="in"),
-        dict(t=8.27, dz=-0.73, pitch=-21),
+        dict(t=8.42, dz=-0.73, pitch=-21),
         dict(t=9.0, head=(-15, 0, 0)),
         # Se levanta
         dict(t=9.6, pitch=18, spine=(15, 0, 0), dz=-0.70, head=(0, 0, 0),
@@ -361,14 +387,15 @@ def bolivar_keys() -> list[dict]:
 def monteverde_keys() -> list[dict]:
     return [
         # Llega corriendo; tira el sombrero y desenvaina mientras corre
-        dict(t=0.0, x=7.0, y=0.12, yaw=-90, pitch=14, spine=(5, 0, 0), head=(-5, 0, 0), gait=RUN, sword=False, blade=SHEATH_BLADE, edge=F(1, 0, 0)),
+        dict(t=0.0, x=RUN_FROM.x, y=RUN_FROM.y, yaw=RUN_YAW, pitch=14, spine=(5, 0, 0), head=(-5, 0, 0), gait=RUN, sword=False, blade=SHEATH_BLADE, edge=F(1, 0, 0)),
         dict(t=0.4, rh=("t", F(0.10, -0.30, 1.05))),
         dict(t=0.55, rh=("t", F(0.20, -0.55, 1.50))),
         dict(t=0.85, rh=("t", F(0.20, 0.10, 0.98))),
         dict(t=0.92, sword=True),
         dict(t=1.25, rh=("t", F(0.35, -0.18, 1.30)), blade=F(0.55, -0.05, 0.83), edge=F(0.83, 0, -0.55)),
-        dict(t=1.9, x=2.1, e="lin"),
-        dict(t=2.4, x=1.55, y=0.0, pitch=3, spine=(0, 0, 0), head=(0, 0, 0), gait=None, feet=GUARD, dz=-0.07,
+        # Corre parejo y frena en el último medio metro, girándose hacia Bolívar
+        dict(t=1.9, x=(GUARD_AT - RUN_DIR * 0.55).x, y=(GUARD_AT - RUN_DIR * 0.55).y, yaw=RUN_YAW, e="lin"),
+        dict(t=2.4, x=GUARD_AT.x, y=GUARD_AT.y, yaw=-90, pitch=3, spine=(0, 0, 0), head=(0, 0, 0), gait=None, feet=GUARD, dz=-0.07,
              rh=GUARD_HAND, blade=GUARD_BLADE, edge=GUARD_EDGE, lh=GUARD_OFFHAND, e="out"),
         # 1) Tajo desde arriba
         dict(t=2.6, rh=("t", F(0.05, -0.12, 1.82)), blade=F(-0.55, 0.05, 0.83), edge=F(0.83, 0, 0.55), pitch=-6, spine=(-8, 0, 0)),
@@ -393,16 +420,12 @@ def monteverde_keys() -> list[dict]:
         dict(t=5.25, spine=(12, 0, 0), rh=("t", F(0.32, 0.05, 1.47))),
         dict(t=5.45, spine=(6, 0, 0), rh=("t", F(0.28, 0.05, 1.44))),
         dict(t=5.62, x=1.0, pitch=4, spine=(10, 0, 0)),
-        # Bolívar lo empuja: trastabilla hacia atrás
-        dict(t=5.75, pitch=-22, spine=(-12, 0, 0), head=(-15, 0, 0), rh=("t", F(0.05, -0.45, 1.50)), blade=F(-0.3, -0.5, 0.8),
+        # Bolívar lo empuja (MONTEVERDE_STAGGER): retrocede trastabillando y abre los brazos para no caer
+        dict(t=5.75, pitch=0, spine=(0, 0, 0), head=(-10, 0, 0), rh=("t", F(0.05, -0.45, 1.50)), blade=F(-0.3, -0.5, 0.8),
              lh=("t", F(0.1, 0.45, 1.40)), e="out"),
-        dict(t=5.92, feet={"r": F(-0.35, -0.10)}),
-        dict(t=6.12, feet={"l": F(-0.30, 0.12)}),
-        dict(t=6.3, x=2.1, e="out"),
-        dict(t=6.35, feet=GUARD),
         dict(t=6.45, pitch=0, spine=(0, 0, 0), head=(0, 0, 0), rh=GUARD_HAND, blade=GUARD_BLADE, edge=GUARD_EDGE, lh=GUARD_OFFHAND),
         # Contraataque: carga, tajo fuerte y empujón
-        dict(t=6.6, x=2.1, rh=("t", F(0.05, -0.38, 1.80)), blade=F(-0.3, -0.4, 0.85), edge=F(0.6, 0.6, 0), spine=(-6, -22, 0)),
+        dict(t=6.6, x=1.9, rh=("t", F(0.05, -0.38, 1.80)), blade=F(-0.3, -0.4, 0.85), edge=F(0.6, 0.6, 0), spine=(-6, -22, 0)),
         dict(t=6.75, feet={"r": F(0.45, -0.09)}),
         dict(t=6.95, feet={"l": F(-0.2, 0.12), "lyaw": 45}),
         dict(t=6.98, x=1.18, e="in"),
@@ -433,7 +456,7 @@ def monteverde_keys() -> list[dict]:
 # --- vista previa ---------------------------------------------------------------------------------
 
 
-def preview(folder: str, video: bool, close: bool = False) -> None:
+def preview(folder: str, video: bool, close: bool = False, times: list[float] | None = None) -> None:
     os.makedirs(folder, exist_ok=True)
     sc = bpy.context.scene
     sc.render.fps = FPS
@@ -458,7 +481,7 @@ def preview(folder: str, video: bool, close: bool = False) -> None:
     w, h = 400, 300
     sc.render.resolution_x, sc.render.resolution_y = w, h
     sc.render.image_settings.file_format = "PNG"
-    times = [0.3, 1.0, 1.6, 2.1, 2.6, 3.0, 3.3, 3.55, 4.15, 4.75, 5.2, 5.8, 6.3, 7.0, 7.35, 7.8, 8.4, 9.4, 10.1, 10.6, 11.4, 12.2, 13.0, 13.9]
+    times = times or [0.3, 1.0, 1.6, 2.1, 2.6, 3.0, 3.3, 3.55, 4.15, 4.75, 5.2, 5.8, 6.3, 7.0, 7.35, 7.8, 8.4, 9.4, 10.1, 10.6, 11.4, 12.2, 13.0, 13.9]
     cols = 6
     rows = math.ceil(len(times) / cols)
     sheet = np.zeros((rows * h, cols * w, 4), dtype=np.float32)
@@ -524,6 +547,9 @@ def build_bolivar() -> tuple[bpy.types.Object, bpy.types.Object]:
     build_saber(arm, body)
     rig = Rig(arm)
     rig.keys(bolivar_keys())
+    for t, w in BOLIVAR_HITS:
+        rig.impulse(t, w)
+    rig.stagger(*BOLIVAR_STAGGER, kick=-180)
     rig.bake(ACTION, DURATION)
     hide_sword_in_other_actions(arm, ACTION)
     return arm, body
@@ -536,8 +562,12 @@ def build_monteverde() -> tuple[bpy.types.Object, bpy.types.Object]:
     isolate_hat(body)
     rig = Rig(arm)
     rig.keys(monteverde_keys())
-    # Tira el sombrero hacia atrás y a su derecha (+Y, lejos del usuario) mientras corre hacia -X
-    rig.overrides.append(hat_override(body, rig, toss_at=0.55, velocity=Vector((0.6, 1.4, 2.4))))
+    for t, w in MONTEVERDE_HITS:
+        rig.impulse(t, w)
+    rig.stagger(*MONTEVERDE_STAGGER, kick=-170)
+    # Tira el sombrero hacia atrás y a su derecha mientras corre
+    right = Vector((-math.cos(math.radians(RUN_YAW)), -math.sin(math.radians(RUN_YAW)), 0))
+    rig.overrides.append(hat_override(body, rig, toss_at=0.55, throw=right * 1.2 - RUN_DIR * 0.6 + Vector((0, 0, 2.4))))
     rig.bake(ACTION, DURATION)
     hide_sword_in_other_actions(arm, ACTION)
     return arm, body
@@ -555,7 +585,8 @@ def main(args: list[str]) -> None:
             arm.animation_data.action = next(
                 t.strips[0].action for t in arm.animation_data.nla_tracks if t.strips[0].action.name.startswith(ACTION)
             )
-        preview(args[args.index("--preview") + 1], "--video" in args, "--close" in args)
+        times = [float(x) for x in args[args.index("--times") + 1].split(",")] if "--times" in args else None
+        preview(args[args.index("--preview") + 1], "--video" in args, "--close" in args, times)
         if "--no-export" in args:
             return
 
