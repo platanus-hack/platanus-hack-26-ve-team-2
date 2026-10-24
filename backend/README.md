@@ -34,6 +34,47 @@ uv run uvicorn app.main:app --reload
 
 Coordenadas en formato GeoJSON: `[lng, lat]`, SRID 4326, anillo cerrado (primer punto = último).
 
+## Voz: conversación con personajes
+Pipeline por turno: audio → **STT** → **LLM** (prompt de la ubicación/personaje) → **TTS** + **visemas**
+para lipsync. Proveedor actual: ElevenLabs (Scribe v2, Agents text-only, Flash v2.5). Requiere
+`ELEVENLABS_API_KEY` en `backend/.env`; sin ella la API arranca igual y `/voice/*` responde 503.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/voice/locations` | Ubicaciones y personajes disponibles |
+| POST | `/voice/sessions` | Al entrar en rango: `{"location_id","character_id"}` → `session_id` + saludo en audio |
+| POST | `/voice/sessions/{id}/turns` | Multipart: `audio` (webm/m4a/mp3/wav…, máx. 5 MB) **o** `text` |
+| DELETE | `/voice/sessions/{id}` | Al salir de rango: libera la sesión |
+| WS | `/voice/ws` | Lo mismo en streaming: cada etapa se envía apenas termina |
+
+Respuesta de un turno (REST):
+```json
+{ "transcript": "hola qué tal", "reply_text": "Todo bien, aquí recordando Carabobo...",
+  "speech": { "text": "...", "audio_b64": "...", "audio_mime": "audio/mpeg", "duration_s": 6.8,
+              "visemes": [{"t": 0.07, "d": 0.069, "v": "O"}] },
+  "timings_ms": {"stt": 700, "llm": 800, "tts": 1200, "total": 2700} }
+```
+`visemes`: `t` inicio (s), `d` duración (s), `v` ∈ `sil PP FF TH DD kk CH SS nn RR aa E I O U`
+(set Oculus/Meta → blendshapes del avatar). Sincronizar con el `currentTime` del reproductor.
+
+WebSocket `/voice/ws` (JSON salvo el audio):
+```
+→ {"type":"start","location_id":"campo_carabobo","character_id":"bolivar"}
+← {"type":"session","session_id":...}   ← {"type":"speech", ...saludo}
+→ <frames binarios con la grabación>  →  {"type":"audio_end","mime_type":"audio/m4a"}
+   (o bien → {"type":"text","text":"hola"})
+← {"type":"transcript","text"}  ← {"type":"reply","text"}  ← {"type":"speech",...}  ← {"type":"turn_end","timings_ms"}
+← {"type":"error","code","message"}   (la conexión sigue abierta)
+→ {"type":"end"}
+```
+
+Arquitectura (`app/voice/`): `ports.py` define las interfaces `SpeechToText`, `LanguageModel` y
+`TextToSpeech`; `providers/elevenlabs/` las implementa; `registry.py` elige el proveedor por
+settings (`VOICE_STT_PROVIDER`, …); `service.py` orquesta el turno sin conocer proveedores;
+`personas.yaml` define ubicaciones, personajes, voces y el template del prompt.
+Las sesiones viven en memoria con TTL (`VOICE_SESSION_TTL_S`) y tope (`VOICE_MAX_SESSIONS`): con
+varias réplicas habría que moverlas a Redis.
+
 ## Migraciones
 ```bash
 uv run alembic revision --autogenerate -m "descripcion"

@@ -17,6 +17,10 @@ services:
 
   api:
     build: ./backend
+    # ELEVENLABS_API_KEY y demás secretos; `environment` sobrescribe DATABASE_URL para la red de compose.
+    env_file:
+      - path: ./backend/.env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/platanus_ar
     ports:
