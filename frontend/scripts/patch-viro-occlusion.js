@@ -5,8 +5,10 @@
  * pero con profundidad "monocular" (ARCore en teléfonos sin sensor ToF) ese margen es 0.
  * Con margen 0 el ruido del mapa de profundidad hace que el piso tape los pies del personaje.
  *
- * Este script cambia el margen a max(8% de la distancia, 12 cm) dentro de libviro_renderer.so
- * (10 cm con sensor de profundidad). Restricciones del reemplazo:
+ * Este script cambia el margen a max(15% de la distancia, 30 cm) dentro de libviro_renderer.so
+ * (20 cm con sensor de profundidad). Con un margen menor (8% / 12 cm) el personaje se "picaba" al
+ * verlo de lejos: a varios metros la profundidad monocular es tan ruidosa que el piso y el fondo lo
+ * tapaban a pedazos. Restricciones del reemplazo:
  * - Mismo largo que el original, para no desplazar el binario.
  * - Terminar igual ("r)"): el compilador de C++ copia la línea en bloques de 16 bytes desde el .so
  *   y escribe los últimos bytes como constantes en el código máquina, así que esos no se pueden cambiar.
@@ -22,9 +24,11 @@ const AAR = path.join(
   "../node_modules/@reactvision/react-viro/android/viro_renderer/viro_renderer-release.aar",
 );
 const ORIGINAL = "mix(realWorldDepth * 0.08, 0.0, ar_depth_is_monocular)";
-const PATCHED = "max(realWorldDepth*.08,  .1+.02*ar_depth_is_monocular)";
+const PATCHED = "max(realWorldDepth*.15,  .2+.10*ar_depth_is_monocular)";
+// Versiones anteriores de este parche: se reemplazan por la actual
+const PREVIOUS = [ORIGINAL, "max(realWorldDepth*.08,  .1+.02*ar_depth_is_monocular)"];
 
-if (PATCHED.length !== ORIGINAL.length || !PATCHED.endsWith(ORIGINAL.slice(-2))) {
+if (PREVIOUS.some((p) => p.length !== PATCHED.length || !PATCHED.endsWith(p.slice(-2)))) {
   throw new Error("El reemplazo debe tener el mismo largo y terminar igual que el original");
 }
 
@@ -44,8 +48,8 @@ for (const entry of zip.getEntries()) {
     alreadyPatched++;
     continue;
   }
-  const at = data.indexOf(ORIGINAL);
-  if (at === -1) continue;
+  const at = PREVIOUS.map((p) => data.indexOf(p)).find((i) => i !== -1);
+  if (at === undefined) continue;
   data.write(PATCHED, at, "latin1");
   zip.updateFile(entry, data);
   patched++;

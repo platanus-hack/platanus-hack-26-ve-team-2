@@ -39,9 +39,12 @@ const FALLBACK_HIT_TYPES = new Set(["ExistingPlane", "EstimatedHorizontalPlane",
 // en el horizonte cuando se apunta recto o por encima de él
 const MIN_PLACE_DISTANCE = 0.8;
 const MAX_PLACE_DISTANCE = 6;
+// Solo el anillo flota apenas sobre el piso (el personaje no): a ras del piso el ruido del mapa de
+// profundidad hacía que la oclusión lo tapara a pedazos
+const RETICLE_LIFT = 0.04;
 
 ViroMaterials.createMaterials({
-  reticle: { lightingModel: "Constant", diffuseColor: "#E66F3DDD", cullMode: "None" },
+  reticle: { lightingModel: "Constant", diffuseColor: "#E66F3DEE", cullMode: "None" },
 });
 
 // Anillo para marcar en el piso dónde aparecerá el personaje
@@ -51,7 +54,7 @@ const RING = (() => {
   for (let i = 0; i < 40; i++) {
     const a = (i / 40) * Math.PI * 2;
     outer.push([Math.cos(a) * 0.3, Math.sin(a) * 0.3]);
-    inner.push([Math.cos(a) * 0.24, Math.sin(a) * 0.24]);
+    inner.push([Math.cos(a) * 0.22, Math.sin(a) * 0.22]);
   }
   return { outer, holes: [inner] };
 })();
@@ -207,7 +210,7 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
 
       {!placement && floor && (
         <ViroPolygon
-          position={floor.point}
+          position={[floor.point[0], floor.point[1] + RETICLE_LIFT, floor.point[2]]}
           rotation={[-90, 0, 0]}
           vertices={RING.outer}
           holes={RING.holes}
