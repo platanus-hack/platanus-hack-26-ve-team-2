@@ -1,3 +1,4 @@
+import { Environment } from "@/config/environment";
 import type { AudioFile, SimulationTurn } from "@/types/voice";
 
 import { http } from "../client";
@@ -18,5 +19,14 @@ export const SimulationsModule = {
     return http.post<SimulationTurn>(`/simulations/${encodeURIComponent(simulationId)}/ask`, form, {
       timeoutMs: ASK_TIMEOUT_MS,
     });
+  },
+
+  /**
+   * WebSocket de la conversación (más rápido que `ask`): la sesión se abre al conectar y la
+   * respuesta llega frase por frase. `sessionId` retoma el hilo si sigue vivo.
+   */
+  wsUrl: (simulationId: string, sessionId?: string | null) => {
+    const base = `${Environment.WS_BASE_URL}/simulations/${encodeURIComponent(simulationId)}/ws`;
+    return sessionId ? `${base}?session_id=${encodeURIComponent(sessionId)}` : base;
   },
 };

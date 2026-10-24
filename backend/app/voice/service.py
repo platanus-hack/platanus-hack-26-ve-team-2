@@ -1,9 +1,12 @@
 """Orquestador de la conversación. No conoce a ningún proveedor concreto (solo los puertos).
 
-Un turno se modela como un stream de eventos (transcripción -> respuesta -> audio), así el
-WebSocket puede enviar cada etapa apenas termina y el endpoint REST simplemente los agrega.
+Un turno se modela como un stream de eventos (transcripción -> audio por frase -> respuesta), así
+el WebSocket puede enviar cada etapa apenas termina y el endpoint REST simplemente los agrega.
+Cada frase del LLM se sintetiza en cuanto se completa, mientras el LLM sigue generando: el
+personaje empieza a hablar con la primera frase, no al final de la respuesta.
 """
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable
@@ -22,7 +25,7 @@ from app.voice.ports import (
     TextToSpeech,
 )
 from app.voice.sessions import SessionStore, VoiceSession
-from app.voice.text import clean_for_tts, sanitize_user_text
+from app.voice.text import SentenceSplitter, clean_for_tts, sanitize_user_text
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +50,7 @@ class SpeechEvent:
     duration_s: float
     visemes: list[Viseme] = field(default_factory=list)
     elapsed_ms: int = 0
+    index: int = 0  # orden de la frase dentro de la respuesta
 
 
 TurnEvent = TranscriptEvent | ReplyEvent | SpeechEvent
@@ -134,7 +138,7 @@ class ConversationService:
             if not user_text:
                 raise NoSpeechError("No se detectó voz")
 
-            # 2) LLM con el prompt de la ubicación/personaje
+            # 2) LLM en streaming -> 3) TTS por frase, en paralelo con lo que falta del LLM
             t = time.perf_counter()
             request = ChatRequest(
                 session_id=session.id,
@@ -142,22 +146,58 @@ class ConversationService:
                 history=list(session.history),
                 user_text=user_text,
             )
-            reply = clean_for_tts(await self._call("llm", self.llm.generate(request)))
-            if not reply:
-                raise ProviderError("llm")
+            splitter = SentenceSplitter()
+            sentences: list[str] = []
+            pending: list[asyncio.Task[SpeechEvent]] = []
+
+            def speak(sentence: str) -> None:
+                if sentence := clean_for_tts(sentence):
+                    sentences.append(sentence)
+                    task = asyncio.create_task(self._speak(sentence, char, len(pending)))
+                    pending.append(task)
+
+            emitted = 0
+            try:
+                async for chunk in self._llm_stream(request):
+                    for sentence in splitter.feed(chunk):
+                        speak(sentence)
+                    # Lo que ya esté sintetizado sale sin esperar al resto del LLM (en orden)
+                    while emitted < len(pending) and pending[emitted].done():
+                        yield pending[emitted].result()
+                        emitted += 1
+                speak(splitter.flush())
+                llm_ms = _ms(t)
+                if not sentences:
+                    raise ProviderError("llm")
+                while emitted < len(pending):
+                    yield await pending[emitted]
+                    emitted += 1
+            finally:
+                for task in pending[emitted:]:
+                    task.cancel()
+
+            reply = " ".join(sentences)
             session.history.append(ChatMessage("user", user_text))
             session.history.append(ChatMessage("assistant", reply))
-            yield ReplyEvent(reply, _ms(t))
-
-            # 3) Texto -> voz + visemas
-            yield await self._speak(reply, char)
+            yield ReplyEvent(reply, llm_ms)
 
     # ---------- internos ----------
 
     def _prompt(self, loc: Location, char: Character, context: str | None = None) -> str:
         return self.catalog.system_prompt(loc, char, context)
 
-    async def _speak(self, text: str, char: Character) -> SpeechEvent:
+    async def _llm_stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Como `_call`, para el stream del LLM."""
+        try:
+            async for chunk in self.llm.stream(request):
+                yield chunk
+        except VoiceError:
+            raise
+        except Exception as e:
+            log.exception("Fallo del proveedor en llm")
+            raise ProviderError("llm") from e
+
+    async def _speak(self, text: str, char: Character, index: int = 0) -> SpeechEvent:
         voice_id = char.voices.get(self.tts.name)
         if voice_id is None:
             raise VoiceError(f"'{char.id}' no tiene voz para el TTS '{self.tts.name}'")
@@ -172,6 +212,7 @@ class ConversationService:
             duration_s=round(speech.duration_s, 3),
             visemes=to_visemes(speech.char_timings),
             elapsed_ms=_ms(t),
+            index=index,
         )
 
     @staticmethod

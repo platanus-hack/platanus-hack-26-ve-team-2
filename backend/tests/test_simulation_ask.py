@@ -76,3 +76,35 @@ def test_cubo_negro_is_a_circle_around_the_building():
     assert region.is_valid and len(CUBO_NEGRO.rings[0]) > 30
     # equirectangular: el radio en grados varía con la dirección, pero en metros es constante
     assert max(radii) / min(radii) < 1.02
+
+
+def test_ws_opens_session_on_connect_and_streams_sentences(client, llm: FakeLLM):
+    with client.websocket_connect("/simulations/carabobo_prueba/ws") as ws:
+        hello = ws.receive_json()
+        assert hello["type"] == "session"
+        ws.send_bytes(b"fake-")
+        ws.send_bytes(b"m4a")
+        ws.send_json({"type": "audio_end", "mime_type": "audio/m4a"})
+        msgs = [ws.receive_json() for _ in range(5)]
+        assert [m["type"] for m in msgs] == ["transcript", "speech", "speech", "reply", "turn_end"]
+        assert msgs[1]["audio_b64"] and msgs[1]["visemes"]
+        ws.send_json({"type": "end"})
+    sim = CUBO_NEGRO.simulation("carabobo_prueba")
+    assert sim is not None
+    assert sim.prompt.splitlines()[0] in llm.requests[0].system_prompt
+    # La sesión sobrevive al WS: /ask (o una reconexión) sigue el mismo hilo
+    second = _ask(client, hello["session_id"]).json()
+    assert second["session_id"] == hello["session_id"]
+    assert len(llm.requests[1].history) == 2
+
+
+def test_ws_reuses_session_and_rejects_bad_input(client):
+    first = _ask(client).json()["session_id"]
+    with client.websocket_connect(f"/simulations/carabobo_prueba/ws?session_id={first}") as ws:
+        assert ws.receive_json()["session_id"] == first
+        ws.send_json({"type": "start"})
+        assert ws.receive_json()["code"] == "invalid_input"
+        ws.send_json({"type": "audio_end", "mime_type": "text/plain"})
+        assert ws.receive_json()["code"] == "invalid_input"
+    with client.websocket_connect("/simulations/nope/ws") as ws:
+        assert ws.receive_json()["code"] == "not_found"

@@ -5,6 +5,7 @@ OpenAI, Claude, Piper, Azure...) se implementa la clase abstracta y se registra 
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -70,6 +71,13 @@ class LanguageModel(Provider):
     @abstractmethod
     async def generate(self, request: ChatRequest) -> str:
         """Respuesta del personaje. `history` no incluye el turno actual."""
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Respuesta en fragmentos a medida que se genera (para hablar por frases).
+
+        Por defecto un solo fragmento: los proveedores sin streaming no necesitan implementarlo.
+        """
+        yield await self.generate(request)
 
     async def open_session(self, session_id: str, system_prompt: str) -> None:  # noqa: B027
         """Opcional: preparar la sesión por adelantado para bajar la latencia del primer turno."""

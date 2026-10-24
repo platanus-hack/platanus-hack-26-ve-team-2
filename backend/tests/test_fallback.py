@@ -1,6 +1,7 @@
 """Consulta de respaldo: solo cuando el LLM principal responde el marcador."""
 
 import asyncio
+from collections.abc import AsyncIterator
 
 from app.core.config import get_settings
 from app.voice.fallback import FALLBACK_MARKER, FallbackLanguageModel
@@ -26,6 +27,16 @@ class ScriptedLLM(LanguageModel):
         self.closed.append(session_id)
 
 
+class StreamingLLM(ScriptedLLM):
+    def __init__(self, chunks: list[str]) -> None:
+        super().__init__("".join(chunks))
+        self.chunks = chunks
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        for chunk in self.chunks:
+            yield chunk
+
+
 class FakeResearcher:
     def __init__(self, answer: str = "", error: Exception | None = None) -> None:
         self.answer_text = answer
@@ -40,6 +51,14 @@ class FakeResearcher:
 
     async def shutdown(self) -> None:
         pass
+
+
+async def _collect(stream: AsyncIterator[str]) -> list[str]:
+    return [chunk async for chunk in stream]
+
+
+def _stream(primary: LanguageModel, researcher: FakeResearcher | None) -> list[str]:
+    return asyncio.run(_collect(FallbackLanguageModel(primary, researcher).stream(REQUEST)))
 
 
 def _generate(primary: LanguageModel, researcher: FakeResearcher | None) -> str:
@@ -66,6 +85,20 @@ def test_marker_without_researcher_or_on_error_admits_it():
         reply = _generate(ScriptedLLM(FALLBACK_MARKER), researcher)
         assert FALLBACK_MARKER not in reply
         assert "no lo recuerdo" in reply
+
+
+def test_stream_passes_chunks_through_once_it_is_not_the_marker():
+    researcher = FakeResearcher("no debería usarse")
+    chunks = _stream(StreamingLLM(["Na", "cí en ", "Caracas."]), researcher)
+    assert chunks == ["Na", "cí en ", "Caracas."]  # sin retener: el TTS arranca ya
+    assert researcher.requests == []
+
+
+def test_stream_with_marker_split_across_chunks_consults():
+    primary = StreamingLLM([" [CONS", "ULTAR", "]"])
+    researcher = FakeResearcher("Me exhumaron en 2010.")
+    assert _stream(primary, researcher) == ["Me exhumaron en 2010."]
+    assert primary.closed == ["s1"]
 
 
 def test_prompts_ask_for_the_marker_and_only_presenter_knows_all_history():

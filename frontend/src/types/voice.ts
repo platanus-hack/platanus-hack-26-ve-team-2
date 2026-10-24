@@ -68,3 +68,12 @@ export interface SimulationTurn extends Turn {
   character_id: string;
   character_name: string;
 }
+
+/** Mensajes del servidor en WS /simulations/{id}/ws: la respuesta llega frase por frase. */
+export type SimulationWsMessage =
+  | { type: "session"; session_id: string }
+  | { type: "transcript"; text: string }
+  | ({ type: "speech"; index: number } & Speech)
+  | { type: "reply"; text: string }
+  | { type: "turn_end"; timings_ms: Record<string, number> }
+  | { type: "error"; code: string; message: string };

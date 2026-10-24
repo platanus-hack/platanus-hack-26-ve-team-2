@@ -56,8 +56,14 @@ de 75 m en Chuao, con la simulación `carabobo_prueba`). Arquitectura (`app/simu
 
 ## Voz: conversación con personajes
 Pipeline por turno: audio → **STT** → **LLM** (prompt de la ubicación/personaje) → **TTS** + **visemas**
-para lipsync. Proveedor actual: ElevenLabs (Scribe v2, Agents text-only, Flash v2.5). Requiere
-`ELEVENLABS_API_KEY` en `backend/.env`; sin ella la API arranca igual y `/voice/*` responde 503.
+para lipsync. Proveedores: ElevenLabs para STT y TTS (Scribe v2, Flash v2.5) y Claude Haiku 5.5 con
+streaming para el LLM (`VOICE_LLM_PROVIDER=elevenlabs` vuelve a Agents, más lento). Requiere
+`ELEVENLABS_API_KEY` y `ANTHROPIC_API_KEY` en `backend/.env`; sin ellas la API arranca igual y
+`/voice/*` responde 503.
+
+Para bajar la latencia, cada frase del LLM se sintetiza en cuanto se completa, mientras el LLM sigue
+generando: por WebSocket el personaje empieza a hablar con la primera frase (`first_audio` en los
+timings). La app usa `WS /simulations/{id}/ws`, que además abre la sesión al conectar.
 
 | Método | Ruta | Descripción |
 |---|---|---|
@@ -65,14 +71,15 @@ para lipsync. Proveedor actual: ElevenLabs (Scribe v2, Agents text-only, Flash v
 | POST | `/voice/sessions` | Al entrar en rango: `{"location_id","character_id"}` → `session_id` + saludo en audio |
 | POST | `/voice/sessions/{id}/turns` | Multipart: `audio` (webm/m4a/mp3/wav…, máx. 5 MB) **o** `text` |
 | DELETE | `/voice/sessions/{id}` | Al salir de rango: libera la sesión |
-| WS | `/voice/ws` | Lo mismo en streaming: cada etapa se envía apenas termina |
+| WS | `/voice/ws` | Lo mismo en streaming: cada etapa se envía apenas termina, el audio frase por frase |
+| WS | `/simulations/{id}/ws` | Conversación de una simulación (la que usa la app); `?session_id=` retoma el hilo |
 
 Respuesta de un turno (REST):
 ```json
 { "transcript": "hola qué tal", "reply_text": "Todo bien, aquí recordando Carabobo...",
   "speech": { "text": "...", "audio_b64": "...", "audio_mime": "audio/mpeg", "duration_s": 6.8,
               "visemes": [{"t": 0.07, "d": 0.069, "v": "O"}] },
-  "timings_ms": {"stt": 700, "llm": 800, "tts": 1200, "total": 2700} }
+  "timings_ms": {"stt": 700, "first_audio": 1500, "llm": 900, "tts": 1100, "total": 2400} }
 ```
 `visemes`: `t` inicio (s), `d` duración (s), `v` ∈ `sil PP FF TH DD kk CH SS nn RR aa E I O U`
 (set Oculus/Meta → blendshapes del avatar). Sincronizar con el `currentTime` del reproductor.
@@ -83,13 +90,17 @@ WebSocket `/voice/ws` (JSON salvo el audio):
 ← {"type":"session","session_id":...}   ← {"type":"speech", ...saludo}
 → <frames binarios con la grabación>  →  {"type":"audio_end","mime_type":"audio/m4a"}
    (o bien → {"type":"text","text":"hola"})
-← {"type":"transcript","text"}  ← {"type":"reply","text"}  ← {"type":"speech",...}  ← {"type":"turn_end","timings_ms"}
+← {"type":"transcript","text"}  ← {"type":"speech","index":0,...}  ← {"type":"speech","index":1,...}
+← {"type":"reply","text"}  ← {"type":"turn_end","timings_ms"}
 ← {"type":"error","code","message"}   (la conexión sigue abierta)
 → {"type":"end"}
 ```
 
+`/simulations/{id}/ws` usa el mismo protocolo sin `start` ni `text`: al conectar responde `session`.
+El REST (`/ask`, `/turns`) une las frases en un solo audio.
+
 Arquitectura (`app/voice/`): `ports.py` define las interfaces `SpeechToText`, `LanguageModel` y
-`TextToSpeech`; `providers/elevenlabs/` las implementa; `registry.py` elige el proveedor por
+`TextToSpeech`; `providers/elevenlabs/` y `providers/anthropic/` las implementan; `registry.py` elige el proveedor por
 settings (`VOICE_STT_PROVIDER`, …); `service.py` orquesta el turno sin conocer proveedores;
 `personas.yaml` define ubicaciones, personajes, voces y el template del prompt.
 Las sesiones viven en memoria con TTL (`VOICE_SESSION_TTL_S`) y tope (`VOICE_MAX_SESSIONS`): con

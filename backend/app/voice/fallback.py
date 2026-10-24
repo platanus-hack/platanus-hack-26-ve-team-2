@@ -7,6 +7,7 @@ latencia de la búsqueda.
 """
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Protocol
 
 from app.voice.ports import ChatRequest, LanguageModel
@@ -51,8 +52,32 @@ class FallbackLanguageModel(LanguageModel):
         reply = await self._primary.generate(request)
         if FALLBACK_MARKER not in reply:
             return reply
-        # El LLM principal guarda su propio historial (ElevenLabs Agents) y ahí quedó el marcador:
-        # se cierra su conversación para que la reabra con nuestro historial (ya con la respuesta)
+        return await self._consult(request)
+
+    async def stream(self, request: ChatRequest) -> AsyncIterator[str]:
+        """Retiene el inicio hasta descartar el marcador; luego reenvía los fragmentos tal cual."""
+        held = ""
+        passthrough = False
+        async for chunk in self._primary.stream(request):
+            if passthrough:
+                yield chunk
+                continue
+            held += chunk
+            start = held.lstrip()
+            if start.startswith(FALLBACK_MARKER) or FALLBACK_MARKER.startswith(start):
+                continue  # puede ser (o es) el marcador: no se habla todavía
+            passthrough = True
+            yield held
+        if passthrough:
+            return
+        if FALLBACK_MARKER in held:
+            yield await self._consult(request)
+        elif held:
+            yield held
+
+    async def _consult(self, request: ChatRequest) -> str:
+        # El LLM principal puede guardar su propio historial (ElevenLabs Agents) y ahí quedó el
+        # marcador: se cierra su conversación para que la reabra con nuestro historial
         await self._primary.close_session(request.session_id)
         answer = ""
         if self._researcher is not None:

@@ -17,6 +17,7 @@ from app.voice.sessions import SessionStore
 
 _PROVIDERS = {
     "elevenlabs": "app.voice.providers.elevenlabs.factory",
+    "anthropic": "app.voice.providers.anthropic.factory",  # solo LLM
 }
 
 

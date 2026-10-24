@@ -9,7 +9,7 @@ from app import main
 from app.voice.lipsync import to_visemes
 from app.voice.ports import CharTiming
 from app.voice.sessions import SessionStore
-from app.voice.text import clean_for_tts, sanitize_user_text
+from app.voice.text import SentenceSplitter, clean_for_tts, sanitize_user_text
 from tests.fakes import FakeLLM
 
 
@@ -46,7 +46,12 @@ def test_audio_turn(client: TestClient, llm: FakeLLM):
     body = r.json()
     assert body["transcript"] == "hola que tal"
     assert body["reply_text"].startswith("Todo bien")  # sin la acotación *sonríe*
-    assert set(body["timings_ms"]) == {"stt", "llm", "tts", "total"}
+    assert set(body["timings_ms"]) == {"stt", "llm", "tts", "first_audio", "total"}
+    # Dos frases sintetizadas por separado y unidas en un audio, con los visemas corridos
+    assert body["speech"]["text"] == "Todo bien, aquí recordando Carabobo. ¿Quieres verlo?"
+    starts = [v["t"] for v in body["speech"]["visemes"]]
+    first_sentence_s = len("Todo bien, aquí recordando Carabobo.") * 0.05  # FakeTTS: 50 ms/letra
+    assert starts == sorted(starts) and starts[-1] > first_sentence_s
     # El saludo cuenta como historial y el prompt es el del personaje de la sesión.
     assert llm.requests[0].history[0].role == "assistant"
     assert "Simón Bolívar" in llm.requests[0].system_prompt
@@ -113,11 +118,18 @@ def test_websocket_audio_and_text_turns(client: TestClient):
         ws.send_bytes(b"\x1a\x45")
         ws.send_bytes(b"\xdf\xa3")
         ws.send_json({"type": "audio_end", "mime_type": "audio/m4a"})
-        types = [ws.receive_json()["type"] for _ in range(4)]
-        assert types == ["transcript", "reply", "speech", "turn_end"]
+        msgs = [ws.receive_json() for _ in range(5)]
+        assert [m["type"] for m in msgs] == ["transcript", "speech", "speech", "reply", "turn_end"]
+        # Una frase por mensaje, en orden: el cliente reproduce la primera sin esperar al resto
+        assert [(m["index"], m["text"]) for m in msgs[1:3]] == [
+            (0, "Todo bien, aquí recordando Carabobo."),
+            (1, "¿Quieres verlo?"),
+        ]
+        assert msgs[4]["timings_ms"]["first_audio"] <= msgs[4]["timings_ms"]["total"]
 
         ws.send_json({"type": "text", "text": "¿estuviste en la batalla?"})
-        assert [ws.receive_json()["type"] for _ in range(3)] == ["reply", "speech", "turn_end"]
+        types = [ws.receive_json()["type"] for _ in range(4)]
+        assert types == ["speech", "speech", "reply", "turn_end"]
 
         ws.send_json({"type": "bogus"})
         assert ws.receive_json()["code"] == "invalid_input"
@@ -154,3 +166,14 @@ def test_visemes_spanish_rules():
 def test_text_cleaning():
     assert clean_for_tts("*ríe* ¡Hola! 😀 **amigo**") == "¡Hola! amigo"
     assert sanitize_user_text("hola\x00\x07   mundo " + "x" * 50, 12) == "hola mundo x"
+
+
+def test_sentence_splitter_streams_complete_sentences():
+    splitter = SentenceSplitter(min_chars=10)
+    out: list[str] = []
+    for chunk in ["¡Sí! Fue en 18", "21. *sonríe. Ya* Ganamos en ", "Carabobo. ¿Y tú?"]:
+        out += splitter.feed(chunk)
+    # "¡Sí!" es corta y se junta con la siguiente; "18" + "21." no se corta antes del punto,
+    # y la acotación abierta tampoco se corta por su punto interno
+    assert out == ["¡Sí! Fue en 1821.", "*sonríe. Ya* Ganamos en Carabobo."]
+    assert splitter.flush() == "¿Y tú?"

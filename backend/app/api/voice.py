@@ -1,6 +1,7 @@
 """Conversación por voz con personajes.
 
-REST: un request por turno. WebSocket: un evento por etapa (transcripción, respuesta, audio).
+REST: un request por turno. WebSocket: un evento por etapa (transcripción, audio por frase,
+respuesta), así el cliente reproduce la primera frase mientras se generan las demás.
 """
 
 import logging
@@ -50,6 +51,7 @@ from app.voice.service import (
     ReplyEvent,
     SpeechEvent,
     TranscriptEvent,
+    TurnEvent,
     VoiceSession,
 )
 
@@ -119,7 +121,7 @@ _MIME_BY_EXTENSION = {
 }
 
 
-def _normalize_mime(mime: str | None, filename: str | None = None) -> str:
+def normalize_mime(mime: str | None, filename: str | None = None) -> str:
     """'audio/webm;codecs=opus' -> 'audio/webm'. Sin MIME útil, lo infiere de la extensión.
 
     Lanza si no es un formato de audio admitido.
@@ -170,7 +172,7 @@ async def read_audio(upload: UploadFile, service: ConversationService) -> AudioI
     data = await upload.read(limit + 1)
     if len(data) > limit:
         raise InvalidInputError(f"Audio demasiado grande (máx. {limit // 1024} KB)")
-    mime = _normalize_mime(upload.content_type, upload.filename)
+    mime = normalize_mime(upload.content_type, upload.filename)
     return AudioInput(data, mime, upload.filename or "audio")
 
 
@@ -183,24 +185,68 @@ async def collect_turn(
 ) -> TurnOut:
     """Ejecuta un turno completo y agrega sus eventos en una sola respuesta REST."""
     t0 = time.perf_counter()
-    transcript, reply, speech, timings = None, "", None, {}
+    transcript, reply, speeches, timings = None, "", [], TurnTimings(t0)
     async for event in service.run_turn(session, audio=audio, text=text):
+        timings.record(event)
         match event:
             case TranscriptEvent():
-                transcript, timings["stt"] = event.text, event.elapsed_ms
+                transcript = event.text
             case ReplyEvent():
-                reply, timings["llm"] = event.text, event.elapsed_ms
+                reply = event.text
             case SpeechEvent():
-                speech, timings["tts"] = event, event.elapsed_ms
-    timings["total"] = int((time.perf_counter() - t0) * 1000)
-    if speech is None:  # el servicio siempre termina con SpeechEvent; defensa ante regresiones
+                speeches.append(event)
+    if not speeches:  # el servicio siempre emite audio; defensa ante regresiones
         raise ProviderError("tts")
-    log.info("voice turn %s/%s %s", session.location_id, session.character_id, timings)
+    log.info("voice turn %s/%s %s", session.location_id, session.character_id, timings.done())
     return TurnOut(
         transcript=transcript,
         reply_text=reply,
-        speech=SpeechOut.from_event(speech),
-        timings_ms=timings,
+        speech=SpeechOut.from_event(merge_speech(speeches)),
+        timings_ms=timings.ms,
+    )
+
+
+class TurnTimings:
+    """ms por etapa. `first_audio`: desde que llega la pregunta hasta la primera frase lista,
+    lo que de verdad espera el visitante con el streaming por frases."""
+
+    def __init__(self, t0: float) -> None:
+        self._t0 = t0
+        self.ms: dict[str, int] = {}
+
+    def record(self, event: TurnEvent) -> None:
+        match event:
+            case TranscriptEvent():
+                self.ms["stt"] = event.elapsed_ms
+            case ReplyEvent():
+                self.ms["llm"] = event.elapsed_ms
+            case SpeechEvent():
+                self.ms.setdefault("first_audio", self._since_start())
+                self.ms["tts"] = self.ms.get("tts", 0) + event.elapsed_ms
+
+    def done(self) -> dict[str, int]:
+        self.ms["total"] = self._since_start()
+        return self.ms
+
+    def _since_start(self) -> int:
+        return int((time.perf_counter() - self._t0) * 1000)
+
+
+def merge_speech(speeches: list[SpeechEvent]) -> SpeechEvent:
+    """Une las frases en un solo audio (los frames mp3 se pueden concatenar) y corre sus visemas."""
+    if len(speeches) == 1:
+        return speeches[0]
+    offset, visemes = 0.0, []
+    for s in speeches:
+        visemes += [{**v, "t": round(v["t"] + offset, 4)} for v in s.visemes]
+        offset += s.duration_s
+    return SpeechEvent(
+        text=" ".join(s.text for s in speeches),
+        audio=b"".join(s.audio for s in speeches),
+        mime_type=speeches[0].mime_type,
+        duration_s=round(offset, 3),
+        visemes=visemes,
+        elapsed_ms=sum(s.elapsed_ms for s in speeches),
     )
 
 
@@ -242,7 +288,7 @@ async def voice_ws(ws: WebSocket) -> None:
     service: ConversationService | None = getattr(ws.app.state, "voice", None)
     await ws.accept()
     if service is None:
-        await _ws_error(ws, VoiceUnavailableError("Servicio de voz no disponible"))
+        await ws_error(ws, VoiceUnavailableError("Servicio de voz no disponible"))
         await ws.close(code=1013)
         return
 
@@ -256,7 +302,7 @@ async def voice_ws(ws: WebSocket) -> None:
             if (chunk := frame.get("bytes")) is not None:
                 if len(buffer) + len(chunk) > service.limits.max_audio_bytes:
                     buffer.clear()
-                    await _ws_error(ws, InvalidInputError("Audio demasiado grande"))
+                    await ws_error(ws, InvalidInputError("Audio demasiado grande"))
                 else:
                     buffer.extend(chunk)
                 continue
@@ -277,19 +323,19 @@ async def voice_ws(ws: WebSocket) -> None:
                                 "expires_in_s": service.sessions.ttl_s,
                             }
                         )
-                        await _ws_speech(ws, greeting)
+                        await ws_speech(ws, greeting)
                     case WsAudioEnd():
-                        audio = AudioInput(bytes(buffer), _normalize_mime(msg.mime_type))
+                        audio = AudioInput(bytes(buffer), normalize_mime(msg.mime_type))
                         buffer.clear()
-                        await _ws_turn(ws, service, _require(session), audio=audio)
+                        await ws_turn(ws, service, _require(session), audio=audio)
                     case WsText():
-                        await _ws_turn(ws, service, _require(session), text=msg.text)
+                        await ws_turn(ws, service, _require(session), text=msg.text)
                     case WsEnd():
                         break
             except ValidationError:
-                await _ws_error(ws, InvalidInputError("Mensaje inválido"))
+                await ws_error(ws, InvalidInputError("Mensaje inválido"))
             except VoiceError as e:
-                await _ws_error(ws, e)
+                await ws_error(ws, e)
     except WebSocketDisconnect:
         pass
     finally:
@@ -305,27 +351,26 @@ def _require(session: VoiceSession | None) -> VoiceSession:
     return session
 
 
-async def _ws_turn(ws: WebSocket, service: ConversationService, session: VoiceSession, **kw):
-    t0 = time.perf_counter()
-    timings: dict[str, int] = {}
+async def ws_turn(ws: WebSocket, service: ConversationService, session: VoiceSession, **kw):
+    timings = TurnTimings(time.perf_counter())
     async for event in service.run_turn(session, **kw):
+        timings.record(event)
         match event:
             case TranscriptEvent():
-                timings["stt"] = event.elapsed_ms
                 await ws.send_json({"type": "transcript", "text": event.text})
             case ReplyEvent():
-                timings["llm"] = event.elapsed_ms
                 await ws.send_json({"type": "reply", "text": event.text})
             case SpeechEvent():
-                timings["tts"] = event.elapsed_ms
-                await _ws_speech(ws, event)
-    timings["total"] = int((time.perf_counter() - t0) * 1000)
-    await ws.send_json({"type": "turn_end", "timings_ms": timings})
+                await ws_speech(ws, event)
+    timings.done()
+    log.info("voice ws turn %s/%s %s", session.location_id, session.character_id, timings.ms)
+    await ws.send_json({"type": "turn_end", "timings_ms": timings.ms})
 
 
-async def _ws_speech(ws: WebSocket, event: SpeechEvent) -> None:
-    await ws.send_json({"type": "speech", **SpeechOut.from_event(event).model_dump()})
+async def ws_speech(ws: WebSocket, event: SpeechEvent) -> None:
+    payload = SpeechOut.from_event(event).model_dump()
+    await ws.send_json({"type": "speech", "index": event.index, **payload})
 
 
-async def _ws_error(ws: WebSocket, exc: VoiceError) -> None:
+async def ws_error(ws: WebSocket, exc: VoiceError) -> None:
     await ws.send_json({"type": "error", "code": exc.code, "message": str(exc)})
