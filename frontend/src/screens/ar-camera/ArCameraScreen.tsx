@@ -1,4 +1,5 @@
 import { ViroARSceneNavigator } from "@reactvision/react-viro";
+import { File } from "expo-file-system";
 import { Redirect, router, useIsFocused } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useRef, useState } from "react";
@@ -88,7 +89,17 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     const result = await navigator.current?._takeScreenshot(`mirar-${Date.now()}`, false);
     if (!result?.success || !result.url) return null;
     const url: string = result.url;
-    return { uri: url.startsWith("file://") ? url : `file://${url}`, name: "captura.jpg", type: "image/jpeg" };
+    const uri = url.startsWith("file://") ? url : `file://${url}`;
+    // Achicada sube en una fracción del tiempo. Si la build no trae el módulo nativo, va la original
+    try {
+      const { shrinkImage } = await import("@/utils/shrinkImage");
+      const small = await shrinkImage(uri);
+      new File(uri).delete();
+      return { uri: small, name: "captura.jpg", type: "image/jpeg" };
+    } catch (e) {
+      if (__DEV__) console.warn("[Mirar] no se pudo achicar la captura, se sube completa", e);
+      return { uri, name: "captura.jpg", type: "image/jpeg" };
+    }
   }
   // Lipsync: el visema que suena mueve la boca del anfitrión directo en el modelo nativo
   const conversation = useSimulationConversation(
