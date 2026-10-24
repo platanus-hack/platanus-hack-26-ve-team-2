@@ -105,8 +105,13 @@ export function useSimulationConversation(
       if (__DEV__) console.log("[Mirar] el servidor pidió la captura", lookId, image?.uri ?? "sin captura");
       // Sin captura el servidor deja de esperarla y el personaje pide que apunte la cámara
       if (!image) return;
+      const startedAt = Date.now();
       try {
         await clientApi.simulations.look(simulationId, lookId, image);
+        if (__DEV__) {
+          const kb = Math.round(new File(image.uri).size / 1024);
+          console.log("[Mirar] captura subida", `${kb} KB en ${Date.now() - startedAt} ms`);
+        }
       } catch (e) {
         console.warn("[Mirar] no se pudo subir la captura", e);
       } finally {
