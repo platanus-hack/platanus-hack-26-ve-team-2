@@ -25,7 +25,7 @@ npm start                     # servidor de Metro para un dev build ya instalado
 la configuración nativa vive en `app.json` (plugins de Viro y expo-location).
 
 ## Configuración
-Un solo `.env` (versionado) para desarrollo y producción, sin distinción de entornos:
+Un solo `.env` (no versionado; copialo con `cp .env.example .env`) para desarrollo y producción, sin distinción de entornos:
 - `EXPO_PUBLIC_API_URL=https://api-platanus.jp6.dev`
 - `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` (la usan `app.config.js` y el mapa)
 

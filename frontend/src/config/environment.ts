@@ -1,7 +1,7 @@
 /**
  * Configuración de la app. Única fuente de verdad para URLs y keys.
  *
- * Expo inyecta en build time las variables `EXPO_PUBLIC_*` desde `.env` (versionado).
+ * Expo inyecta en build time las variables `EXPO_PUBLIC_*` desde `.env` (no versionado, ver `.env.example`).
  * No hay distinción de entornos: desarrollo y producción usan los mismos valores.
  *
  * Nunca leas `process.env` fuera de este archivo: Expo solo reemplaza accesos
