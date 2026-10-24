@@ -3,18 +3,18 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CircleButton, Icon } from "@/components/common";
 import { colors, fonts } from "@/theme";
-import type { Simulation } from "@/types/site";
+import type { SimulationSummary } from "@/types/region";
 
 type Props = {
   visible: boolean;
   siteName: string;
-  simulations: Simulation[];
-  current: string;
-  onSelect: (title: string) => void;
+  simulations: SimulationSummary[];
+  currentId: string;
+  onSelect: (simulationId: string) => void;
   onClose: () => void;
 };
 
-export function SimulationsSheet({ visible, siteName, simulations, current, onSelect, onClose }: Props) {
+export function SimulationsSheet({ visible, siteName, simulations, currentId, onSelect, onClose }: Props) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -32,18 +32,18 @@ export function SimulationsSheet({ visible, siteName, simulations, current, onSe
             </CircleButton>
           </View>
           {simulations.map((item, i) => {
-            const isCurrent = current === item.title;
+            const isCurrent = currentId === item.id;
             return (
               <Pressable
-                key={item.title}
+                key={item.id}
                 accessibilityRole="button"
                 style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
-                onPress={() => onSelect(item.title)}
+                onPress={() => onSelect(item.id)}
               >
                 <Text style={styles.num}>0{i + 1}</Text>
                 <View style={styles.info}>
                   <Text style={[styles.rowTitle, isCurrent && { color: "#c76035" }]}>{item.title}</Text>
-                  <Text style={styles.rowDetail}>{item.detail}</Text>
+                  <Text style={styles.rowDetail}>{item.description}</Text>
                 </View>
                 <Icon name="chevron" />
               </Pressable>

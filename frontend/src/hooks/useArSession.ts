@@ -1,11 +1,15 @@
 import { useSyncExternalStore } from "react";
 
+import type { SceneObject, Vec3 } from "@/types/simulation";
+
 // Estado compartido entre la escena Viro (que corre dentro del navegador AR)
 // y la UI de React Native que la envuelve.
 
-export type Vec3 = [number, number, number];
+export type { Vec3 };
 
 export type ArSessionState = {
+  /** Objetos 3D de la simulación activa; se montan relativos al punto del piso elegido */
+  objects: SceneObject[];
   tracking: boolean;
   /** Altura (y) del plano horizontal más bajo detectado: lo tratamos como el piso */
   floorY: number | null;
@@ -21,6 +25,7 @@ export type ArSessionState = {
 };
 
 const initialState: ArSessionState = {
+  objects: [],
   tracking: false,
   floorY: null,
   occlusion: "checking",

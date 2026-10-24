@@ -74,6 +74,9 @@ async function request<T>(method: string, path: string, options: RequestOptions 
       body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
     });
   } catch (e) {
+    // fetch también lanza por errores del cliente (body inválido, FormData no soportado):
+    // se registra el original para no confundirlos con falta de red
+    console.warn(`[API] ${method} ${path} falló antes de obtener respuesta:`, e);
     const timedOut = controller.signal.aborted && !signal?.aborted;
     throw new ApiError({
       status: 0,

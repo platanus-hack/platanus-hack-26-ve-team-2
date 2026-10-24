@@ -54,6 +54,13 @@
         {
           "locationWhenInUsePermission": "Usamos tu ubicación para activar experiencias AR en zonas cercanas."
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Usamos el micrófono para que puedas hacerle preguntas a los personajes históricos.",
+          "enableBackgroundPlayback": false
+        }
       ]
     ],
     "experiments": {

@@ -89,12 +89,19 @@ class ConversationService:
         self, location_id: str, character_id: str
     ) -> tuple[VoiceSession, SpeechEvent]:
         """Al entrar en rango: saludo fijo (sin LLM, latencia mínima) + precalentar el LLM."""
-        loc, char = self.catalog.get(location_id, character_id)
-        session = await self.sessions.create(loc.id, char.id)
+        session = await self.open_session(location_id, character_id)
+        _, char = self.catalog.get(location_id, character_id)
         session.history.append(ChatMessage("assistant", char.greeting))
-        greeting = await self._speak(char.greeting, char)
-        await self._call("llm", self.llm.open_session(session.id, self._prompt(loc, char)))
-        return session, greeting
+        return session, await self._speak(char.greeting, char)
+
+    async def open_session(
+        self, location_id: str, character_id: str, context: str | None = None
+    ) -> VoiceSession:
+        """Sesión sin saludo. `context` reemplaza el contexto del sitio en el system prompt."""
+        loc, char = self.catalog.get(location_id, character_id)
+        session = await self.sessions.create(loc.id, char.id, context)
+        await self._call("llm", self.llm.open_session(session.id, self._prompt(loc, char, context)))
+        return session
 
     def get_session(self, session_id: str) -> VoiceSession | None:
         return self.sessions.get(session_id)
@@ -131,7 +138,7 @@ class ConversationService:
             t = time.perf_counter()
             request = ChatRequest(
                 session_id=session.id,
-                system_prompt=self._prompt(loc, char),
+                system_prompt=self._prompt(loc, char, session.context),
                 history=list(session.history),
                 user_text=user_text,
             )
@@ -147,8 +154,8 @@ class ConversationService:
 
     # ---------- internos ----------
 
-    def _prompt(self, loc: Location, char: Character) -> str:
-        return self.catalog.system_prompt(loc, char)
+    def _prompt(self, loc: Location, char: Character, context: str | None = None) -> str:
+        return self.catalog.system_prompt(loc, char, context)
 
     async def _speak(self, text: str, char: Character) -> SpeechEvent:
         voice_id = char.voices.get(self.tts.name)

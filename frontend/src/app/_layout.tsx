@@ -4,6 +4,8 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 
+import { ActiveSimulationProvider } from "@/contexts/ActiveSimulationContext";
+
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
@@ -23,9 +25,11 @@ export default function RootLayout() {
   if (!loaded && !error) return null;
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="camera" options={{ animation: "fade" }} />
-    </Stack>
+    <ActiveSimulationProvider>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="camera" options={{ animation: "fade" }} />
+      </Stack>
+    </ActiveSimulationProvider>
   );
 }

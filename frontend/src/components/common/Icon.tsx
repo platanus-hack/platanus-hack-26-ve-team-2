@@ -14,7 +14,8 @@ export type IconName =
   | "layers"
   | "nav"
   | "chevron"
-  | "sound";
+  | "sound"
+  | "mic";
 
 const paths: Record<IconName, ReactNode> = {
   search: (
@@ -53,6 +54,12 @@ const paths: Record<IconName, ReactNode> = {
   ),
   nav: <Path d="m12 2 7 19-7-4-7 4 7-19Z" />,
   chevron: <Path d="m9 18 6-6-6-6" />,
+  mic: (
+    <>
+      <Path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+      <Path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+    </>
+  ),
   sound: (
     <>
       <Path d="M11 5 6 9H3v6h3l5 4V5Z" />

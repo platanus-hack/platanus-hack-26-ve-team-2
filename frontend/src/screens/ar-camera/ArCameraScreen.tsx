@@ -1,18 +1,19 @@
 import { ViroARSceneNavigator } from "@reactvision/react-viro";
-import { router, useIsFocused, useLocalSearchParams } from "expo-router";
+import { Redirect, router, useIsFocused } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { CameraShade, SimulationsSheet } from "@/components/ar";
+import { CameraShade, MicPermissionPrompt, PushToTalkButton, SimulationsSheet } from "@/components/ar";
 import { VistaARScene } from "@/components/ar/VistaARScene";
-import { CircleButton, Icon, PrimaryButton, PrimaryLabel, StatusRow } from "@/components/common";
-import { findSite, simulations, UNLOCK_RADIUS_M } from "@/data/sites";
+import { CircleButton, Icon, StatusRow } from "@/components/common";
+import { type ActiveSimulation, useActiveSimulation } from "@/contexts/ActiveSimulationContext";
 import { arSession, useArSession } from "@/hooks/useArSession";
-import { useUserLocation } from "@/hooks/useUserLocation";
+import { useMicrophonePermission } from "@/hooks/useMicrophonePermission";
+import { useSimulationConversation } from "@/hooks/useSimulationConversation";
+import { useStartSimulation } from "@/hooks/useStartSimulation";
 import { colors, fonts } from "@/theme";
-import { distanceInMeters } from "@/utils/geo";
 
 type CameraPermission = "pending" | "granted" | "denied";
 
@@ -23,8 +24,8 @@ function useCameraPermission(): CameraPermission {
     if (Platform.OS !== "android") return;
     const { CAMERA } = PermissionsAndroid.PERMISSIONS;
 
-    // Si otro permiso (ubicación) se pide a la vez, Android puede dejar esta promesa sin resolver,
-    // así que primero revisamos y volvemos a revisar cuando la app regresa al frente.
+    // Si otro permiso (micrófono, ubicación) se pide a la vez, Android puede dejar esta promesa sin
+    // resolver, así que primero revisamos y volvemos a revisar cuando la app regresa al frente.
     async function sync(askIfMissing: boolean) {
       if (await PermissionsAndroid.check(CAMERA)) return setPermission("granted");
       if (!askIfMissing) return;
@@ -40,45 +41,55 @@ function useCameraPermission(): CameraPermission {
   return permission;
 }
 
-function formatDistance(meters: number): string {
-  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+export function ArCameraScreen() {
+  const { active } = useActiveSimulation();
+  // Se llega aquí solo desde "Comenzar simulación"; sin simulación activa no hay escena que montar
+  if (!active) return <Redirect href="/" />;
+  return <ArSimulationView active={active} />;
 }
 
-export function ArCameraScreen() {
+function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const insets = useSafeAreaInsets();
-  const { siteId } = useLocalSearchParams<{ siteId?: string }>();
-  const site = findSite(siteId);
+  const { setActive } = useActiveSimulation();
+  const { start } = useStartSimulation();
   const camera = useCameraPermission();
   // Solo una sesión de RA a la vez: si hay otra pantalla encima, esta suelta la cámara
   const focused = useIsFocused();
-  const location = useUserLocation();
+  // Lo primero al entrar a la simulación: pedir el micrófono
+  const mic = useMicrophonePermission();
+  const conversation = useSimulationConversation(active.simulationId);
   const [scenesOpen, setScenesOpen] = useState(false);
-  const [scene, setScene] = useState(simulations[0].title);
 
   const tracking = useArSession((s) => s.tracking);
   const floorFound = useArSession((s) => s.floorY !== null);
   const hasFloor = useArSession((s) => s.floor !== null);
-  const occlusion = useArSession((s) => s.occlusion);
-  const depthSupported = occlusion === "supported";
   const placed = useArSession((s) => s.placement !== null);
   const modelStatus = useArSession((s) => s.modelStatus);
+  const occlusion = useArSession((s) => s.occlusion);
+  const depthSupported = occlusion === "supported";
 
+  const { region } = active;
+  const current = region.simulations.find((s) => s.id === active.simulationId);
+  const { phase, lastTurn, error } = conversation;
+  const hasObjects = active.objects.length > 0;
+
+  // Otra simulación = otros objetos: se vuelven a colocar en el piso
   useEffect(() => {
     arSession.reset();
+    arSession.set({ objects: active.objects });
     return () => arSession.reset();
-  }, []);
+  }, [active.objects]);
 
-  const distance = location.coords ? distanceInMeters(location.coords, site.coordinate) : null;
-  // Damos margen por la imprecisión del GPS (sobre todo dentro de edificios)
-  const unlocked = distance !== null && distance <= Math.max(UNLOCK_RADIUS_M, location.accuracy ?? 0);
+  async function switchSimulation(simulationId: string) {
+    setScenesOpen(false);
+    if (simulationId === active.simulationId) return;
+    const loaded = await start(region.id, simulationId);
+    if (loaded) setActive({ ...loaded, region });
+  }
 
   const status = (() => {
     if (camera === "denied") return { title: "Sin acceso a la cámara", subtitle: "Actívalo en los ajustes del teléfono" };
-    if (location.status === "denied")
-      return { title: "Sin acceso a tu ubicación", subtitle: "La necesitamos para saber si estás en el sitio" };
-    if (distance === null) return { title: "Buscando tu ubicación…", subtitle: "Esto puede tardar unos segundos" };
-    if (!unlocked)
-      return { title: `Estás a ${formatDistance(distance)} de ${site.name}`, subtitle: "Acércate para activar la experiencia" };
+    if (!hasObjects) return { title: "Simulación sin modelos 3D", subtitle: "Esta simulación todavía no tiene personajes" };
     if (camera === "pending") return { title: "Preparando la cámara…", subtitle: "Acepta el permiso si te lo pide" };
     if (!tracking) return { title: "Escaneando el entorno…", subtitle: "Mueve el teléfono despacio" };
     if (!floorFound)
@@ -87,20 +98,20 @@ export function ArCameraScreen() {
     return { title: "Simulación alineada", subtitle: "Toca para comenzar la experiencia" };
   })();
   // Esperamos a saber si hay oclusión: activarla con el personaje ya colocado lo oculta entero
-  const canStart = unlocked && tracking && hasFloor && occlusion !== "checking";
+  const canStart = hasObjects && tracking && hasFloor && occlusion !== "checking";
 
   const placedHint = (() => {
     if (modelStatus === "error") return "No se pudo cargar el personaje";
     if (modelStatus !== "ready") return "Cargando el personaje…";
     // Al pasar el teléfono a otra persona ARCore puede perder el rastreo un momento
     if (!tracking) return "Recuperando el rastreo, mueve el teléfono despacio";
-    return "Toca al personaje para que salude de nuevo";
+    return null;
   })();
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      {focused && camera === "granted" && unlocked && (
+      {focused && camera === "granted" && hasObjects && (
         <ViroARSceneNavigator
           autofocus
           initialScene={{ scene: VistaARScene }}
@@ -128,9 +139,9 @@ export function ArCameraScreen() {
         </CircleButton>
       </View>
 
-      <View style={[styles.stage, { top: insets.top + 90, bottom: insets.bottom + 190 }]} pointerEvents="none">
+      <View style={[styles.stage, { top: insets.top + 90, bottom: insets.bottom + 230 }]} pointerEvents="none">
         {!placed ? (
-          unlocked &&
+          tracking &&
           !hasFloor && (
             <View style={styles.direction}>
               <Icon name="arrow" size={18} color="white" />
@@ -138,10 +149,12 @@ export function ArCameraScreen() {
             </View>
           )
         ) : (
-          <View style={styles.speech}>
-            <Text style={styles.speechName}>Guía virtual</Text>
-            <Text style={styles.speechText}>“¡Hola! Bienvenido a {site.name}.”</Text>
-          </View>
+          (lastTurn || phase === "sending") && (
+            <View style={styles.speech}>
+              <Text style={styles.speechName}>{lastTurn?.character_name ?? "…"}</Text>
+              <Text style={styles.speechText}>{phase === "sending" ? "…" : `“${lastTurn?.reply_text}”`}</Text>
+            </View>
+          )
         )}
       </View>
 
@@ -171,26 +184,41 @@ export function ArCameraScreen() {
           <>
             <View style={styles.sceneLabel}>
               <Text style={styles.nowPlaying}>REPRODUCIENDO</Text>
-              <Text style={styles.sceneTitle}>{scene}</Text>
-              <Text style={styles.remaining}>{placedHint}</Text>
+              <Text style={styles.sceneTitle}>{current?.title ?? region.name}</Text>
+              <Text style={[styles.remaining, error && styles.error]} numberOfLines={2}>
+                {placedHint ??
+                  error ??
+                  (lastTurn?.transcript ? `Tú: “${lastTurn.transcript}”` : "Pregúntale lo que quieras")}
+              </Text>
             </View>
-            <PrimaryButton onPress={() => setScenesOpen(true)}>
-              <Icon name="layers" color="white" />
-              <PrimaryLabel>Ver simulaciones disponibles</PrimaryLabel>
-            </PrimaryButton>
+
+            {mic.status === "granted" ? (
+              <View style={styles.talkRow}>
+                <View style={styles.side} />
+                <PushToTalkButton
+                  phase={phase}
+                  onPressIn={conversation.startTalking}
+                  onPressOut={conversation.stopTalking}
+                />
+                <View style={styles.side}>
+                  <CircleButton label="Ver simulaciones disponibles" variant="glass" onPress={() => setScenesOpen(true)}>
+                    <Icon name="layers" color="white" />
+                  </CircleButton>
+                </View>
+              </View>
+            ) : (
+              <MicPermissionPrompt status={mic.status} onRequest={mic.request} />
+            )}
           </>
         )}
       </View>
 
       <SimulationsSheet
         visible={scenesOpen}
-        siteName={site.name}
-        simulations={simulations}
-        current={scene}
-        onSelect={(title) => {
-          setScene(title);
-          setScenesOpen(false);
-        }}
+        siteName={region.name}
+        simulations={region.simulations}
+        currentId={active.simulationId}
+        onSelect={switchSimulation}
         onClose={() => setScenesOpen(false)}
       />
     </View>
@@ -271,4 +299,7 @@ const styles = StyleSheet.create({
   nowPlaying: { color: "#f4b47f", fontSize: 9, letterSpacing: 1.3, fontFamily: fonts.bold },
   sceneTitle: { color: "white", fontFamily: fonts.displayBold, fontSize: 17, marginTop: 3 },
   remaining: { color: "#c6cec9", fontSize: 11, fontFamily: fonts.regular, marginTop: 3 },
+  error: { color: "#f4b47f" },
+  talkRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  side: { width: 44, marginTop: 20 },
 });

@@ -13,12 +13,8 @@ import {
 } from "@reactvision/react-viro";
 import { useEffect, useRef } from "react";
 
-import model from "@/assets/models/model-3d-v3.glb";
 import { arSession, useArSession, type Vec3 } from "@/hooks/useArSession";
 
-// Los pies del modelo quedan en y = -1.0 respecto a su origen. +1 cm para que la oclusión
-// por profundidad no "corte" las suelas contra el piso real.
-const MODEL_FOOT_OFFSET = 1.01;
 // El piso está al menos así de abajo del teléfono
 const MIN_FLOOR_DROP = 0.6;
 // Un plano cuenta como piso si está a esta distancia (m) del plano horizontal más bajo
@@ -51,6 +47,9 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
   const placement = useArSession((s) => s.placement);
   const floor = useArSession((s) => s.floor);
   const animation = useArSession((s) => s.animation);
+  const objects = useArSession((s) => s.objects);
+  // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
+  const hostId = objects.find((o) => o.kind === "dynamic")?.id;
   const tracking = useArSession((s) => s.tracking);
   const lastUpdate = useRef(0);
   const planes = useRef(new Map<string, number>());
@@ -151,23 +150,42 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
             shadowNearZ={2}
             shadowFarZ={7}
           />
-          <Viro3DObject
-            source={model}
-            type="GLB"
-            position={[0, MODEL_FOOT_OFFSET, 0]}
-            animation={{
-              name: animation.name,
-              run: animation.run,
-              loop: animation.name === "reposo",
-              onFinish: () => animation.name === "saludo" && arSession.rest(),
-            }}
-            onClick={() => arSession.wave()}
-            onLoadEnd={() => {
-              arSession.set({ modelStatus: "ready" });
-              arSession.wave();
-            }}
-            onError={() => arSession.set({ modelStatus: "error" })}
-          />
+          {objects.map((obj) => {
+            const isHost = obj.id === hostId;
+            const loop = obj.kind === "dynamic" && obj.animation;
+            return (
+              <Viro3DObject
+                key={obj.id}
+                source={obj.model}
+                type="GLB"
+                position={obj.transform.position}
+                rotation={obj.transform.rotation}
+                scale={obj.transform.scale}
+                animation={
+                  isHost
+                    ? {
+                        name: animation.name,
+                        run: animation.run,
+                        loop: animation.name === "reposo",
+                        onFinish: () => animation.name === "saludo" && arSession.rest(),
+                      }
+                    : loop
+                      ? { name: loop, run: true, loop: true }
+                      : undefined
+                }
+                onClick={isHost ? () => arSession.wave() : undefined}
+                onLoadEnd={
+                  isHost
+                    ? () => {
+                        arSession.set({ modelStatus: "ready" });
+                        arSession.wave();
+                      }
+                    : undefined
+                }
+                onError={isHost ? () => arSession.set({ modelStatus: "error" }) : undefined}
+              />
+            );
+          })}
           {/* Sombra sobre el piso real para que el personaje no se vea flotando */}
           <ViroQuad rotation={[-90, 0, 0]} width={3} height={3} arShadowReceiver />
         </ViroNode>

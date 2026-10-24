@@ -1,4 +1,6 @@
 import { HealthModule } from "./modules/health";
+import { RegionsModule } from "./modules/regions";
+import { SimulationsModule } from "./modules/simulations";
 import { VoiceModule } from "./modules/voice";
 import { ZonesModule } from "./modules/zones";
 
@@ -8,6 +10,8 @@ import { ZonesModule } from "./modules/zones";
  */
 export const clientApi = {
   health: HealthModule,
+  regions: RegionsModule,
+  simulations: SimulationsModule,
   zones: ZonesModule,
   voice: VoiceModule,
 };
