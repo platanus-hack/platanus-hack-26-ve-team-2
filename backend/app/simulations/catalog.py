@@ -19,32 +19,59 @@ República y gobierna Venezuela para el rey. Bolívar lo vence en Los Taguanes, 
 jefes se encuentran cara a cara antes del combate.
 """
 
+
+def presenter_prompt(scenes: tuple[Simulation, ...]) -> str:
+    """Contexto de la conversación general: Bolívar recibe al visitante y le ofrece las escenas."""
+    titles = ", ".join(f"«{s.title}»" for s in scenes)
+    return f"""\
+Recibes al visitante como anfitrión de esta experiencia de realidad aumentada sobre la historia de
+Venezuela y conversas con él sobre cualquier parte de tu vida, tus ideas y tu tiempo. Si quiere
+vivir una escena concreta, puede tocar el botón de simulaciones de la pantalla y elegir una:
+{titles}.
+Invítalo a hacerlo cuando venga al caso, sin repetirlo en cada respuesta.
+"""
+
+
 # Edificio Centro Banaven ("Cubo Negro"), Chuao, Caracas. Círculo centrado en la huella del edificio
 # en OpenStreetMap; 75 m de radio cubren el edificio (~58 m al vértice) más margen para el GPS.
 CUBO_NEGRO_CENTER = (-66.8533115, 10.4842436)
+
+CUBO_NEGRO_SCENES = (
+    Simulation(
+        id="carabobo_prueba",
+        title="La Batalla de Carabobo",
+        description="Simulación de prueba: Bolívar y Manuela Sáenz te cuentan la batalla.",
+        prompt=CARABOBO_PROMPT,
+        voice_location_id="campo_carabobo",
+        character_id="bolivar",
+    ),
+    Simulation(
+        id="batalla",
+        title="Batalla",
+        description="Domingo de Monteverde llega a enfrentarse cara a cara con Bolívar.",
+        prompt=BATALLA_PROMPT,
+        voice_location_id="campana_admirable",
+        character_id="bolivar",
+    ),
+)
 
 CUBO_NEGRO = Region(
     id="cubo_negro",
     name="Cubo Negro",
     description="Centro Banaven, Chuao, Caracas. Zona de pruebas de la experiencia AR.",
     rings=(circle_ring(CUBO_NEGRO_CENTER, radius_m=75),),
+    # La primera es la que arranca con "Comenzar simulación": la conversación general con Bolívar
     simulations=(
         Simulation(
-            id="carabobo_prueba",
-            title="La Batalla de Carabobo",
-            description="Simulación de prueba: Bolívar y Manuela Sáenz te cuentan la batalla.",
-            prompt=CARABOBO_PROMPT,
-            voice_location_id="campo_carabobo",
+            id="bolivar_general",
+            title="Conversa con Bolívar",
+            description="El Libertador te recibe y responde lo que quieras saber sobre su vida.",
+            prompt=presenter_prompt(CUBO_NEGRO_SCENES),
+            voice_location_id="presentador",
             character_id="bolivar",
+            kind="general",
         ),
-        Simulation(
-            id="batalla",
-            title="Batalla",
-            description="Domingo de Monteverde llega a enfrentarse cara a cara con Bolívar.",
-            prompt=BATALLA_PROMPT,
-            voice_location_id="campana_admirable",
-            character_id="bolivar",
-        ),
+        *CUBO_NEGRO_SCENES,
     ),
 )
 

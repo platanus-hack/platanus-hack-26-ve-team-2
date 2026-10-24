@@ -17,17 +17,22 @@ def test_list_regions_returns_cubo_negro_as_geojson():
     assert polygon.is_valid
     center = region["center"]
     assert polygon.contains(Point(center["lng"], center["lat"]))
-    assert region["simulations"][0]["id"] == "carabobo_prueba"
+    # Primero la conversación general con el presentador; después las escenas
+    assert [(s["id"], s["kind"]) for s in region["simulations"]] == [
+        ("bolivar_general", "general"),
+        ("carabobo_prueba", "scene"),
+        ("batalla", "scene"),
+    ]
     assert "prompt" not in region["simulations"][0]  # el prompt es contexto del servidor
 
 
-def test_start_without_body_uses_default_simulation():
+def test_start_without_body_opens_the_general_conversation():
     res = client.post("/regions/cubo_negro/simulations/start")
     assert res.status_code == 200
     assert res.json() == {
-        "simulation_id": "carabobo_prueba",
+        "simulation_id": "bolivar_general",
         "region_id": "cubo_negro",
-        "voice_location_id": "campo_carabobo",
+        "voice_location_id": "presentador",
     }
 
 
@@ -49,3 +54,12 @@ def test_simulations_point_to_existing_voice_locations():
     for region in REGIONS:
         for sim in region.simulations:
             assert sim.voice_location_id in catalog.locations, sim.id
+            assert sim.character_id in catalog.locations[sim.voice_location_id].characters, sim.id
+
+
+def test_general_conversation_offers_the_region_scenes():
+    region = REGIONS[0]
+    general = region.default_simulation
+    assert general.kind == "general"
+    for scene in region.simulations[1:]:
+        assert scene.title in general.prompt

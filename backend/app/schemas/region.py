@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from app.schemas.voice import Slug
@@ -14,10 +16,13 @@ class SimulationSummaryOut(BaseModel):
     id: str
     title: str
     description: str
+    kind: Literal["general", "scene"] = Field(
+        description="general = conversación con el presentador; scene = escena histórica"
+    )
 
     @classmethod
     def from_domain(cls, sim: Simulation) -> "SimulationSummaryOut":
-        return cls(id=sim.id, title=sim.title, description=sim.description)
+        return cls(id=sim.id, title=sim.title, description=sim.description, kind=sim.kind)
 
 
 class RegionOut(BaseModel):

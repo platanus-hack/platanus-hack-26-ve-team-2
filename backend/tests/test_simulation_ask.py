@@ -23,9 +23,19 @@ def test_ask_returns_reply_with_lipsync_and_uses_simulation_prompt(client, llm: 
     assert body["character_name"].startswith("Simón Bolívar")
     assert body["transcript"] == "hola que tal"
     assert body["speech"]["audio_b64"] and body["speech"]["visemes"]
-    sim = CUBO_NEGRO.simulations[0]
+    sim = CUBO_NEGRO.simulation("carabobo_prueba")
+    assert sim is not None
     # el prompt de la simulación (no el de personas.yaml) llega al LLM
     assert sim.prompt.splitlines()[0] in llm.requests[0].system_prompt
+
+
+def test_general_conversation_uses_presenter_persona(client, llm: FakeLLM):
+    res = _ask(client, sim="bolivar_general")
+    assert res.status_code == 200, res.text
+    assert res.json()["character_name"].startswith("Simón Bolívar")
+    prompt = llm.requests[0].system_prompt
+    assert "Santísima Trinidad" in prompt  # persona general de Bolívar (personas.yaml)
+    assert "La Batalla de Carabobo" in prompt  # ofrece las escenas de la región
 
 
 def test_ask_keeps_conversation_with_session_id(client, llm: FakeLLM):

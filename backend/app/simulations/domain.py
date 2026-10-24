@@ -6,6 +6,7 @@ inicio de la simulación.
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 # GeoJSON: cada posición es (lng, lat); el primer anillo es el borde exterior y va cerrado.
 Ring = tuple[tuple[float, float], ...]
@@ -22,6 +23,9 @@ class Simulation:
     voice_location_id: str
     # Personaje que responde las preguntas del visitante (voz y personalidad de personas.yaml).
     character_id: str
+    # "general": conversación con el presentador (Bolívar) sobre cualquier tema de su vida, la que
+    # arranca al entrar; "scene": una escena histórica concreta con su propio contexto.
+    kind: Literal["general", "scene"] = "scene"
 
 
 @dataclass(frozen=True, slots=True)
