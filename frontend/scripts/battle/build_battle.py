@@ -31,12 +31,21 @@ from rig import FPS, P, SWORD, F, Rig, smooth  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MODELS = os.path.join(ROOT, "assets", "models")
-# La coreografía base dura 14 s; en EXCHANGE_AT se intercalan EXCHANGE_LEN s más de esgrima
-# (ver exchange_keys) y todo lo que venía después se corre ese tiempo
+# La coreografía base dura 14 s y se le intercalan dos tramos (lo que venía después se corre):
+#  - en EXCHANGE_AT, EXCHANGE_LEN s más de esgrima (ver bolivar_exchange/monteverde_exchange),
+#  - en FALLEN_AT, FALLEN_LEN s con Bolívar en el suelo y Monteverde apuntándole, para los diálogos.
+# Los tiempos "base" son de la coreografía original; later() los pasa a la línea de tiempo final
 BASE_DURATION = 14.0
 EXCHANGE_AT = 4.9
 EXCHANGE_LEN = 6.0
-DURATION = BASE_DURATION + EXCHANGE_LEN
+FALLEN_AT = 9.5
+FALLEN_LEN = 4.0
+DURATION = BASE_DURATION + EXCHANGE_LEN + FALLEN_LEN
+# Monteverde le desvía el sable a Bolívar de un golpe seco y se lo arranca de la mano
+DISARM_AT = 7.08
+# Marcas de la coreografía (tiempos base) para anclar los diálogos (src/data/simulations/batalla/dialogue.json)
+MARKERS = {"cruce": 5.0, "desarme": DISARM_AT, "caido": FALLEN_AT}
+TIMELINE_PATH = os.path.join(ROOT, "src", "data", "simulations", "batalla", "timeline.json")
 ACTION = "batalla"
 HAT_BONE = "Bone_083"  # el bicornio que Monteverde lleva en la mano derecha
 
@@ -222,23 +231,23 @@ def isolate_hat(body: bpy.types.Object) -> None:
     bm.free()
 
 
-def hat_override(body: bpy.types.Object, rig: Rig, toss_at: float, throw: Vector):
-    """El bicornio sigue a la mano hasta `toss_at`; después vuela (parabólico) y queda en el piso.
-    Sale con la velocidad del cuerpo (va corriendo) más la del lanzamiento."""
+def throw_override(body: bpy.types.Object, rig: Rig, bone: str, toss_at: float, throw: Vector):
+    """Objeto que sigue a la mano hasta `toss_at` (el bicornio, el sable al desarmarlo): después vuela
+    en parábola girando y queda acostado en el piso. Sale con la velocidad del cuerpo más `throw`."""
     dt = 1 / 24
     body_v = Vector(
         ((rig.num("x", toss_at + dt) - rig.num("x", toss_at)) / dt, (rig.num("y", toss_at + dt) - rig.num("y", toss_at)) / dt, 0)
     )
     velocity = body_v + throw
     names = {g.index: g.name for g in body.vertex_groups}
-    rest = rig.rest[HAT_BONE]
+    rest = rig.rest[bone]
     inv = rest.inverted()
     pts = []
     for v in body.data.vertices:
-        if v.groups and names[max(v.groups, key=lambda g: g.weight).group] == HAT_BONE:
+        if v.groups and names[max(v.groups, key=lambda g: g.weight).group] == bone:
             pts.append(inv @ v.co)
     pts = np.array([p[:] for p in pts])
-    # El eje más corto del sombrero (su espesor) termina vertical: queda acostado en el piso
+    # El eje más corto del objeto (su espesor) termina vertical: queda acostado en el piso
     cov = np.cov((pts - pts.mean(0)).T)
     thin = Vector(np.linalg.eigh(cov)[1][:, 0])
     state = {}
@@ -246,7 +255,7 @@ def hat_override(body: bpy.types.Object, rig: Rig, toss_at: float, throw: Vector
     def apply(rig: Rig, st: dict, des: dict) -> None:
         t = st["t"]
         if t < toss_at:
-            state["start"] = des[HAT_BONE].copy()
+            state["start"] = des[bone].copy()
             return
         m0 = state["start"]
         r0 = m0.to_3x3()
@@ -265,7 +274,7 @@ def hat_override(body: bpy.types.Object, rig: Rig, toss_at: float, throw: Vector
         spin = Matrix.Rotation(u * math.radians(300), 3, "Z")
         m = (spin @ Quaternion().slerp(lie, u).to_matrix() @ r0).to_4x4()
         m.translation = pos
-        des[HAT_BONE] = m
+        des[bone] = m
 
     return apply
 
@@ -451,13 +460,28 @@ EXCHANGE_CLASHES = [
 ]
 
 
-def later(t: float) -> float:
-    """Tiempo de la coreografía base en la versión con el intercambio intercalado."""
+def with_exchange(t: float) -> float:
+    """Tiempo base con el intercambio de esgrima intercalado (la pausa en el suelo la intercala el rig)."""
     return t + EXCHANGE_LEN if t >= EXCHANGE_AT else t
 
 
+def later(t: float) -> float:
+    """Tiempo base en la línea de tiempo final, con los dos tramos intercalados."""
+    return with_exchange(t) + (FALLEN_LEN if t > FALLEN_AT else 0.0)
+
+
 def shifted(keys: list[dict]) -> list[dict]:
-    return [dict(k, t=later(k["t"])) for k in keys]
+    return [dict(k, t=with_exchange(k["t"])) for k in keys]
+
+
+def fallen_keys() -> list[dict]:
+    """Bolívar en el suelo durante la pausa: alza la cabeza hacia Monteverde para responderle."""
+    t0 = later(FALLEN_AT)
+    return [
+        dict(t=t0 + 1.2, head=(-15, 0, 0), pitch=-21),
+        dict(t=t0 + 1.8, head=(-24, 8, 0), pitch=-15, spine=(-10, 0, 0)),
+        dict(t=t0 + FALLEN_LEN, head=(-20, 0, 0), pitch=-17),
+    ]
 
 
 CUES = sorted([(later(t), s) for t, s in BASE_CUES] + [(EXCHANGE_AT + t, s) for t, s, _, _ in EXCHANGE_CLASHES])
@@ -520,12 +544,12 @@ def bolivar_keys() -> list[dict]:
              lh=("w", F(-0.2, 0.30, 0.06)), rh=("w", F(-0.15, -0.32, 0.08)), blade=F(0.5, -0.85, -0.3),
              feet={"l": F(0.62, 0.13), "r": F(0.60, -0.13), "lyaw": 0}, e="in"),
         dict(t=8.42, dz=-0.73, pitch=-21),
-        dict(t=9.0, head=(-15, 0, 0)),
+        dict(t=9.5, head=(-15, 0, 0)),
         # Se levanta
-        dict(t=9.6, pitch=18, spine=(15, 0, 0), dz=-0.70, head=(0, 0, 0),
+        dict(t=9.85, pitch=18, spine=(15, 0, 0), dz=-0.70, head=(0, 0, 0),
              rh=("w", F(0.12, -0.30, 0.1)), lh=("w", F(0.18, 0.30, 0.06)),
              feet={"l": F(0.33, 0.14), "r": F(0.38, -0.14)}),
-        dict(t=10.1, x=-0.62, dz=-0.42, pitch=30, rh=("w", F(0.22, -0.28, 0.25)), lh=("w", F(0.25, 0.28, 0.25))),
+        dict(t=10.25, x=-0.62, dz=-0.42, pitch=30, rh=("w", F(0.22, -0.28, 0.25)), lh=("w", F(0.25, 0.28, 0.25))),
         dict(t=10.6, x=-0.52, dz=-0.03, pitch=6, spine=(0, 0, 0), rh=("t", F(0.15, -0.25, 1.0)), blade=F(0.4, -0.5, -0.75), edge=F(1, 0, 0), lh=None,
              feet={"l": F(0.0, 0.11), "r": F(0.0, -0.11)}),
         # Se da vuelta y sale corriendo (lejos de Monteverde y del usuario)
@@ -701,6 +725,10 @@ def build_bolivar() -> tuple[bpy.types.Object, bpy.types.Object]:
     build_saber(arm, body)
     rig = Rig(arm)
     rig.keys(shifted(bolivar_keys()) + bolivar_exchange())
+    rig.insert_pause(with_exchange(FALLEN_AT), FALLEN_LEN)
+    rig.keys(fallen_keys())
+    # Desarmado: el sable sale despedido hacia atrás y a su derecha (hacia el usuario) y cae al piso
+    rig.overrides.append(throw_override(body, rig, SWORD, toss_at=later(DISARM_AT), throw=Vector((-1.0, -1.1, 2.4))))
     for t, w in BOLIVAR_HITS:
         rig.impulse(t, w)
     rig.stagger(*BOLIVAR_STAGGER, kick=-180)
@@ -716,12 +744,13 @@ def build_monteverde() -> tuple[bpy.types.Object, bpy.types.Object]:
     isolate_hat(body)
     rig = Rig(arm)
     rig.keys(shifted(monteverde_keys()) + monteverde_exchange())
+    rig.insert_pause(with_exchange(FALLEN_AT), FALLEN_LEN)
     for t, w in MONTEVERDE_HITS:
         rig.impulse(t, w)
     rig.stagger(*MONTEVERDE_STAGGER, kick=-170)
     # Tira el sombrero hacia atrás y a su derecha mientras corre
     right = Vector((-math.cos(math.radians(RUN_YAW)), -math.sin(math.radians(RUN_YAW)), 0))
-    rig.overrides.append(hat_override(body, rig, toss_at=0.55, throw=right * 1.2 - RUN_DIR * 0.6 + Vector((0, 0, 2.4))))
+    rig.overrides.append(throw_override(body, rig, HAT_BONE, toss_at=0.55, throw=right * 1.2 - RUN_DIR * 0.6 + Vector((0, 0, 2.4))))
     rig.bake(ACTION, DURATION)
     hide_sword_in_other_actions(arm, ACTION)
     return arm, body
@@ -755,8 +784,10 @@ def main(args: list[str]) -> None:
         "animation": ACTION,
         "durationMs": int(DURATION * 1000),
         "cues": [{"atMs": int(t * 1000), "sound": s} for t, s in CUES],
+        "markers": {name: int(later(t) * 1000) for name, t in MARKERS.items()},
     }
-    with open(os.path.join(ROOT, "src", "data", "battle.json"), "w") as fh:
+    os.makedirs(os.path.dirname(TIMELINE_PATH), exist_ok=True)
+    with open(TIMELINE_PATH, "w") as fh:
         json.dump(timeline, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
     print("TIMELINE", timeline["durationMs"], "ms,", len(CUES), "sonidos")

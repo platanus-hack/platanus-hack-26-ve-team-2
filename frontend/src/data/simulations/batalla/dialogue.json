@@ -1,0 +1,42 @@
+{
+  "location": "campana_admirable",
+  "model": "eleven_multilingual_v2",
+  "lines": [
+    {
+      "id": "bolivar_castillo",
+      "character": "bolivar",
+      "at": "cruce",
+      "offsetMs": -400,
+      "text": "¡Defenderé este castillo hasta el último aliento!",
+      "voiceSettings": {
+        "stability": 0.3,
+        "similarity_boost": 0.8,
+        "style": 0.65
+      }
+    },
+    {
+      "id": "monteverde_plaza",
+      "character": "monteverde",
+      "at": "desarme",
+      "offsetMs": 800,
+      "text": "Tu plaza ha caído, coronel; el rey retoma lo suyo.",
+      "voiceSettings": {
+        "stability": 0.45,
+        "similarity_boost": 0.8,
+        "style": 0.4
+      }
+    },
+    {
+      "id": "bolivar_guerra",
+      "character": "bolivar",
+      "at": "caido",
+      "offsetMs": 2200,
+      "text": "He perdido una batalla, pero no la guerra.",
+      "voiceSettings": {
+        "stability": 0.4,
+        "similarity_boost": 0.8,
+        "style": 0.5
+      }
+    }
+  ]
+}

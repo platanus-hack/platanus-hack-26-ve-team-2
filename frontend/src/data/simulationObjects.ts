@@ -5,7 +5,7 @@ import patriotModel from "@/assets/models/soldado-patriota.glb";
 import royalistModel from "@/assets/models/soldado-realista.glb";
 import type { Choreography, DynamicSceneObject, SceneObject } from "@/types/simulation";
 
-import { battleChoreography } from "./battle";
+import { battleChoreography } from "./simulations/batalla";
 import { TRENCH_PARAPETS, TRENCH_SLOTS, trenchesChoreography } from "./trenches";
 
 /**
@@ -30,6 +30,7 @@ const bolivar: DynamicSceneObject = {
   name: "Simón Bolívar",
   kind: "dynamic",
   model: bolivarModel,
+  characterId: "bolivar",
   // Los pies del modelo quedan en y = 0 de su origen (mide 1,7 m); +1 cm para que la oclusión no corte las suelas
   transform: { position: [0, 0.01, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
 };
@@ -77,6 +78,7 @@ const SIMULATION_OBJECTS: Record<string, SceneObject[]> = {
       id: "monteverde",
       name: "Domingo de Monteverde",
       kind: "dynamic",
+      characterId: "monteverde",
       model: monteverdeModel,
       transform: { position: [0, 0.01, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     },

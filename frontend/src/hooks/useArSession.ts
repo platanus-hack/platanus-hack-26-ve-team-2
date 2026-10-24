@@ -40,7 +40,7 @@ export type ArSessionState = {
    * El anfitrión usa "saludo", "hablando", "caminar", "reposo" (pose quieta de pie, scripts/add-rest-pose.py)
    * y la de la coreografía
    */
-  animation: { name: string; run: boolean; loop: boolean };
+  animation: { name: string; run: boolean; loop: boolean; interruptible?: boolean };
   /** Escena coreografiada de la simulación (la batalla), si tiene */
   choreography: Choreography | null;
   /**
@@ -246,8 +246,10 @@ export const arSession = {
       set({ battle: "playing", firing: [] });
       return;
     }
-    // Todos los personajes arrancan en el mismo render: el anfitrión por `animation`, el resto por `battle`
-    set({ battle: "playing", animation: { name: choreography.animation, run: true, loop: false } });
+    // Todos los personajes arrancan en el mismo render: el anfitrión por `animation`, el resto por `battle`.
+    // Interrumpible: Viro ignora una animación nueva mientras otra corre (si se elige la batalla en
+    // medio del saludo, Bolívar se quedaba quieto mientras Monteverde peleaba)
+    set({ battle: "playing", animation: { name: choreography.animation, run: true, loop: false, interruptible: true } });
   },
   finishBattle() {
     if (state.battle === "playing") set({ battle: "finished" });

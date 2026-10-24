@@ -227,6 +227,40 @@ class Rig:
                 foot_yaw = yaw + k["feet"].get(s + "yaw", 0.0)
                 self.feet[s].add(t, (Vector((x + w.x, y + w.y, 0)), foot_yaw), e)
 
+    # --- pausas --------------------------------------------------------------------------------
+
+    STEP_TRACKS = ("sword", "gait")
+
+    def insert_pause(self, t: float, length: float) -> None:
+        """Intercala una pausa en t: cada campo se queda con el valor que tenía en t durante `length`
+        segundos y todo lo que venía después se corre ese tiempo (p. ej. para que alcance a hablar)."""
+
+        def held(name: str, track: Track):
+            if name in self.STEP_TRACKS:
+                return track.step(t)
+            a, b, u = track.segment(t)
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                return lerp(a, b, u)
+            if isinstance(a, Vector):
+                return nlerp(a, b, u)
+            if isinstance(a, tuple) and len(a) == 3 and all(isinstance(x, (int, float)) for x in a):
+                return lerp3(a, b, u)
+            if isinstance(a, tuple) and isinstance(b, tuple) and a[0] == b[0]:  # mano (modo, vector)
+                return (a[0], a[1].lerp(b[1], u))
+            return a if u < 0.5 else b
+
+        def held_foot(track: Track):
+            (pa, ya), (pb, yb), u = track.segment(t)
+            return (pa.lerp(pb, u), lerp(ya, yb, u))
+
+        for name, track in [*self.tracks.items(), *(("foot", f) for f in self.feet.values())]:
+            if not track.keys:
+                continue
+            value = held_foot(track) if name == "foot" else held(name, track)
+            track.keys = [(k + length if k > t + 1e-6 else k, v, e) for k, v, e in track.keys]
+            track.add(t, value, "io")
+            track.add(t + length, value, "io")
+
     # --- física ---------------------------------------------------------------------------------
 
     def impulse(self, t: float, deg_per_s: float) -> None:

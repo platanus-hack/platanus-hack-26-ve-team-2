@@ -10,15 +10,22 @@ import runAway from "@/assets/sounds/battle/run_away.mp3";
 import runIn from "@/assets/sounds/battle/run_in.mp3";
 import type { Choreography } from "@/types/simulation";
 
-// Duración y momentos de cada efecto: los escribe scripts/battle/build_battle.py junto con las animaciones
-import timeline from "./battle.json";
+import { buildVoiceCues } from "../dialogue";
+import dialogue from "./dialogue.json";
+// Duración, momentos de cada efecto y marcas: los escribe scripts/battle/build_battle.py junto con las animaciones
+import timeline from "./timeline.json";
+import voices from "./voices.json";
+import { voiceSources } from "./voices";
 
 /**
  * Batalla entre Bolívar y Monteverde: Monteverde llega corriendo, cruzan sables, se empujan,
- * Bolívar cae, se levanta y huye. Al terminar caen globos de los sponsors.
+ * Monteverde desarma a Bolívar, que cae, le responde desde el suelo, se levanta y huye. Al terminar
+ * caen globos de los sponsors. Los diálogos están en dialogue.json (ver ../dialogue.ts).
  */
 export const battleChoreography: Choreography = {
-  ...timeline,
+  animation: timeline.animation,
+  durationMs: timeline.durationMs,
+  cues: timeline.cues,
   sounds: {
     run_in: runIn,
     draw,
@@ -32,4 +39,5 @@ export const battleChoreography: Choreography = {
     fanfare,
   },
   finale: { sound: "fanfare" },
+  voices: buildVoiceCues(dialogue, voices, voiceSources, timeline.markers),
 };

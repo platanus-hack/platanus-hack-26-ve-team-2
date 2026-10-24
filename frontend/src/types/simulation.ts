@@ -1,3 +1,5 @@
+import type { Viseme } from "./voice";
+
 /** Vector 3D en el espacio de la escena AR: metros, relativo al ancla de la simulación. */
 export type Vec3 = [number, number, number];
 
@@ -44,6 +46,18 @@ export interface Entrance {
 
 export type SceneObject = StaticSceneObject | DynamicSceneObject;
 
+/** Línea hablada de la coreografía: el guion está en dialogue.json y el audio lo genera ElevenLabs. */
+export interface VoiceCue {
+  id: string;
+  /** Personaje que la dice (`characterId` de su objeto): si es el anfitrión, se le mueve la boca */
+  character: string;
+  atMs: number;
+  durationMs: number;
+  /** Asset del audio empaquetado en la app */
+  source: number;
+  visemes: Viseme[];
+}
+
 /** Efecto de sonido en un momento fijo de la coreografía. */
 export interface SoundCue {
   atMs: number;
@@ -73,6 +87,8 @@ export interface Choreography {
   sounds: Record<string, number>;
   /** Al terminar caen globos con los logos de los sponsors, con este sonido */
   finale?: { sound: string };
+  /** Diálogos de los personajes */
+  voices?: VoiceCue[];
 }
 
 /** Simulación lista para montar: lo que devolvió la API + los objetos locales. */

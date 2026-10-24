@@ -7,7 +7,7 @@ import disparo2 from "@/assets/sounds/trenches/disparo_2.mp3";
 import type { Choreography, Vec3 } from "@/types/simulation";
 
 // Puestos, parapetos, duración y cada disparo (con la posición de la boca del fusil): los escribe
-// scripts/trenches/build_trenches.py junto con las animaciones, igual que battle.json
+// scripts/trenches/build_trenches.py junto con las animaciones, igual que simulations/batalla/timeline.json
 import timeline from "./trenches.json";
 
 export interface TrenchSlot {

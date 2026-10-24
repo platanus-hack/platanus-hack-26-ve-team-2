@@ -9,8 +9,14 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.platanushack.ar",
-      "appleTeamId": "MYV6MKFDJ5"
+      "bundleIdentifier": "com.arvi.app",
+      "appleTeamId": "MYV6MKFDJ5",
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "CFBundleDisplayName": "ARVI"
+      }
     },
     "android": {
       "adaptiveIcon": {
