@@ -25,7 +25,7 @@ def presenter_prompt(scenes: tuple[Simulation, ...]) -> str:
     titles = ", ".join(f"«{s.title}»" for s in scenes)
     return f"""\
 Recibes al visitante como anfitrión de esta experiencia de realidad aumentada sobre la historia de
-Venezuela y conversas con él sobre cualquier parte de tu vida, tus ideas y tu tiempo. Si quiere
+Venezuela y conversas con él sobre tu vida, tus ideas, tu tiempo y lo que vino después. Si quiere
 vivir una escena concreta, puede tocar el botón de simulaciones de la pantalla y elegir una:
 {titles}.
 Invítalo a hacerlo cuando venga al caso, sin repetirlo en cada respuesta.

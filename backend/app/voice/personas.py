@@ -29,6 +29,8 @@ class Location:
     context: str
     keyterms: list[str]
     characters: dict[str, Character]
+    # El personaje conoce toda la historia hasta hoy (no solo su época), p. ej. Bolívar presentador
+    knows_history: bool = False
 
 
 class PersonaCatalog:
