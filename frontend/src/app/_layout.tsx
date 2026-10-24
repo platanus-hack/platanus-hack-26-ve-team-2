@@ -30,7 +30,8 @@ export default function RootLayout() {
 
   return (
     <ActiveSimulationProvider>
-      <Stack screenOptions={{ headerShown: false }}>
+      {/* freezeOnBlur: el mapa queda montado bajo la cámara RA; congelado no re-renderiza mientras tanto */}
+      <Stack screenOptions={{ headerShown: false, freezeOnBlur: true }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="camera" options={{ animation: "fade" }} />
       </Stack>

@@ -37,11 +37,10 @@ const SIMULATION_OBJECTS: Record<string, SceneObject[]> = {
       name: "Domingo de Monteverde",
       kind: "dynamic",
       model: monteverdeModel,
-      // Modelo estático (sin esqueleto) centrado en su origen: mide 1,9 m, se escala a ~1,7 m como Bolívar
-      // y se sube media altura para apoyarlo en el piso. Mira hacia -X, de frente a Bolívar.
-      // TODO: con el modelo riggeado (pies en y = 0) usar y = 0.01 y walkAnimation "caminar"
-      transform: { position: [DUEL_GAP, 0.866, 0], rotation: [0, -90, 0], scale: [0.9, 0.9, 0.9] },
-      entrance: { from: [DUEL_GAP + 3, 0, 0], durationMs: 3500 },
+      // Como Bolívar: pies en y = 0 (mide 1,7 m), +1 cm para que la oclusión no corte las suelas.
+      // Mira hacia -X, de frente a Bolívar, y llega caminando
+      transform: { position: [DUEL_GAP, 0.01, 0], rotation: [0, -90, 0], scale: [1, 1, 1] },
+      entrance: { from: [DUEL_GAP + 3, 0, 0], durationMs: 3500, walkAnimation: "caminar" },
     },
   ],
 };

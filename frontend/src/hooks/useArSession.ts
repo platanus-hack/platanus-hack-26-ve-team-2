@@ -24,8 +24,6 @@ export type ArSessionState = {
   /** Si el anfitrión está caminando hacia el usuario y si está hablando: deciden su animación */
   walking: boolean;
   speaking: boolean;
-  /** Peso (0–1) de la shape key "boca_abierta" del anfitrión, según el visema que suena */
-  mouth: number;
   modelStatus: "idle" | "loading" | "ready" | "error";
 };
 
@@ -39,7 +37,6 @@ const initialState: ArSessionState = {
   follow: false,
   walking: false,
   speaking: false,
-  mouth: 0,
   modelStatus: "idle",
 };
 
@@ -47,15 +44,31 @@ let state = initialState;
 const listeners = new Set<() => void>();
 
 function set(partial: Partial<ArSessionState>) {
+  // Sin cambios no se notifica: cada aviso re-renderiza la escena y la UI
+  const keys = Object.keys(partial) as (keyof ArSessionState)[];
+  if (keys.every((k) => state[k] === partial[k])) return;
   state = { ...state, ...partial };
   listeners.forEach((l) => l());
+}
+
+// La boca cambia muchas veces por segundo: va directo al modelo nativo, sin pasar por React
+let mouth = 0;
+let mouthListener: ((weight: number) => void) | null = null;
+
+function setMouth(weight: number) {
+  if (weight === mouth) return;
+  mouth = weight;
+  mouthListener?.(weight);
 }
 
 export const arSession = {
   get: () => state,
   set,
   // Conserva la preferencia de seguir al usuario
-  reset: () => set({ ...initialState, follow: state.follow }),
+  reset: () => {
+    setMouth(0);
+    set({ ...initialState, follow: state.follow });
+  },
   /**
    * Otra simulación: se vuelven a colocar los objetos. No toca `tracking` ni `floorY`: reflejan la sesión nativa de ARKit/ARCore, que Viro solo reporta cuando
    * cambian; pisarlos dejaría la UI esperando un evento que no vuelve a llegar.
@@ -76,9 +89,16 @@ export const arSession = {
       placement: null,
       animation: initialState.animation,
       walking: false,
-      mouth: 0,
       modelStatus: "idle",
     });
+    setMouth(0);
+  },
+  /** Peso (0–1) de la shape key "boca_abierta" del anfitrión, según el visema que suena */
+  setMouth,
+  /** Lo registra la escena para aplicar la boca con setNativeProps; recibe el peso actual al registrarse */
+  onMouth(listener: ((weight: number) => void) | null) {
+    mouthListener = listener;
+    listener?.(mouth);
   },
   subscribe(listener: () => void) {
     listeners.add(listener);
@@ -123,14 +143,15 @@ export const arSession = {
   },
   /** Mientras habla gesticula en loop (si no está caminando); al callar se detiene y cierra la boca */
   talk(speaking: boolean) {
+    if (!speaking) setMouth(0);
     if (state.walking) {
-      set(speaking ? { speaking } : { speaking, mouth: 0 });
+      set({ speaking });
       return;
     }
     set(
       speaking
         ? { speaking, animation: { name: "hablando", run: true, loop: true } }
-        : { speaking, animation: { name: "hablando", run: false, loop: false }, mouth: 0 },
+        : { speaking, animation: { name: "hablando", run: false, loop: false } },
     );
   },
 };

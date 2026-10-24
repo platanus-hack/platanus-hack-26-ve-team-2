@@ -12,12 +12,19 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "audio/ogg": "ogg",
 };
 
-/** Reproduce la respuesta del personaje y expone el visema activo, sincronizado frame a frame. */
-export function useSpeechPlayer() {
+/**
+ * Reproduce la respuesta del personaje y avisa a `onViseme` cada vez que cambia el visema activo,
+ * sincronizado frame a frame. No pasa por el estado de React: re-renderizar la pantalla a ese ritmo
+ * hacía que la RA fuera a tirones mientras el personaje habla.
+ */
+export function useSpeechPlayer(onViseme?: (viseme: VisemeId) => void) {
   const player = useAudioPlayer(null);
   const { playing } = useAudioPlayerStatus(player);
   const [visemes, setVisemes] = useState<Viseme[]>([]);
-  const [viseme, setViseme] = useState<VisemeId>("sil");
+  const onVisemeRef = useRef(onViseme);
+  useEffect(() => {
+    onVisemeRef.current = onViseme;
+  });
   const fileRef = useRef<File | null>(null);
 
   const deleteFile = useCallback(() => {
@@ -45,17 +52,22 @@ export function useSpeechPlayer() {
   const stop = useCallback(() => player.pause(), [player]);
 
   // El estado del reproductor se emite cada 500 ms: muy lento para la boca. Se lee el tiempo
-  // en cada frame mientras suena; setViseme no re-renderiza si el visema no cambió.
+  // en cada frame mientras suena y solo se avisa cuando el visema cambia; al terminar, boca cerrada
   useEffect(() => {
     if (!playing || visemes.length === 0) return;
+    let last: VisemeId | null = null;
     let frame = requestAnimationFrame(function tick() {
-      setViseme(visemeAt(visemes, player.currentTime));
+      const viseme = visemeAt(visemes, player.currentTime);
+      if (viseme !== last) onVisemeRef.current?.((last = viseme));
       frame = requestAnimationFrame(tick);
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      onVisemeRef.current?.("sil");
+    };
   }, [playing, visemes, player]);
 
   useEffect(() => deleteFile, [deleteFile]);
 
-  return { play, stop, playing, viseme: playing ? viseme : ("sil" as VisemeId) };
+  return { play, stop, playing };
 }

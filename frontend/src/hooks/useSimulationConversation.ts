@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clientApi } from "@/api";
 import type { ApiError } from "@/api";
-import type { SimulationTurn } from "@/types/voice";
+import type { SimulationTurn, VisemeId } from "@/types/voice";
 
 import { useSpeechPlayer } from "./useSpeechPlayer";
 import { useVoiceRecorder } from "./useVoiceRecorder";
@@ -13,10 +13,11 @@ type Phase = Exclude<ConversationPhase, "speaking">;
 /**
  * Conversación push-to-talk con el personaje de una simulación:
  * presionar → grabar · soltar → enviar audio + simulation_id → reproducir respuesta con lipsync.
+ * `onViseme` recibe el visema que suena en cada cambio (para mover la boca sin re-renderizar).
  */
-export function useSimulationConversation(simulationId: string) {
+export function useSimulationConversation(simulationId: string, onViseme?: (viseme: VisemeId) => void) {
   const recorder = useVoiceRecorder();
-  const speech = useSpeechPlayer();
+  const speech = useSpeechPlayer(onViseme);
   const [phase, setPhaseState] = useState<Phase>("idle");
   // Los gestos llegan más rápido que los renders: la fase real vive en un ref
   const phaseRef = useRef<Phase>("idle");
@@ -84,7 +85,6 @@ export function useSimulationConversation(simulationId: string) {
 
   return {
     phase: (speech.playing && phase === "idle" ? "speaking" : phase) as ConversationPhase,
-    viseme: speech.viseme,
     lastTurn,
     error,
     startTalking,

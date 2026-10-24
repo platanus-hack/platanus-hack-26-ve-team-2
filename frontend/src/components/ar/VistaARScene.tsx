@@ -13,7 +13,7 @@ import {
   type ViroCameraARHitTest,
   type ViroCameraTransform,
 } from "@reactvision/react-viro";
-import { useEffect, useRef, useState } from "react";
+import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { Dimensions, PixelRatio } from "react-native";
 
 import { arSession, type ArSessionState, useArSession, type Vec3 } from "@/hooks/useArSession";
@@ -57,6 +57,8 @@ const MIN_PLACE_DISTANCE = 0.8;
 const MAX_PLACE_DISTANCE = 6;
 // Solo el anillo flota apenas sobre el piso (el personaje no), para que no parpadee contra él
 const RETICLE_LIFT = 0.04;
+// Movimientos del anillo menores a esto (m) no se publican: no se notan y re-renderizan la escena y la UI
+const MIN_FLOOR_MOVE = 0.01;
 // El anfitrión camina hacia el usuario si se aleja más de FOLLOW_START (m) y se detiene al quedar a
 // FOLLOW_STOP; la diferencia evita que arranque y frene a cada paso
 const FOLLOW_START = 2.2;
@@ -111,7 +113,6 @@ export function VistaARScene() {
   const placement = useArSession((s) => s.placement);
   const floor = useArSession((s) => s.floor);
   const animation = useArSession((s) => s.animation);
-  const mouth = useArSession((s) => s.mouth);
   const objects = useArSession((s) => s.objects);
   // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
   const host = objects.find((o): o is DynamicSceneObject => o.kind === "dynamic");
@@ -153,10 +154,10 @@ export function VistaARScene() {
   }
 
   function onPlane(anchor: ViroAnchor) {
-    if (__DEV__) console.log("[AR] plano", JSON.stringify(anchor));
     if (anchor.type !== "plane" || !anchor.alignment?.startsWith("Horizontal")) return;
     const area = (anchor.width ?? 0) * (anchor.height ?? 0);
     if (area < MIN_PLANE_AREA) return;
+    if (__DEV__ && !planes.current.has(anchor.anchorId)) console.log("[AR] plano", anchor.anchorId, anchor.position[1], area.toFixed(2));
     planes.current.set(anchor.anchorId, { y: anchor.position[1], area });
     const floorY = largestPlaneY();
     const current = arSession.get().floorY;
@@ -286,7 +287,9 @@ export function VistaARScene() {
         : aimPoint(camera, cameraOrientation.forward, floorLevel, hit?.transform.position as Vec3 | undefined);
     if (point) {
       lastFloorAt.current = now;
-      arSession.set({ floor: { point, camera } });
+      const prev = arSession.get().floor;
+      const moved = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) > MIN_FLOOR_MOVE;
+      if (!prev || moved(prev.point, point) || moved(prev.camera, camera)) arSession.set({ floor: { point, camera } });
     } else if (now - lastFloorAt.current > FLOOR_HOLD_MS) {
       arSession.set({ floor: null });
     }
@@ -366,11 +369,13 @@ export function VistaARScene() {
       ref={scene}
       anchorDetectionTypes={["PlanesHorizontal"]}
       onTrackingUpdated={onTrackingUpdated}
-      onCameraARHitTest={onCameraARHitTest}
+      // Los eventos por frame solo se suscriben mientras se usan: cada uno cruza al hilo de JS.
+      // El hit test sirve para elegir dónde colocarlo; el transform, para que el anfitrión mire/siga
+      onCameraARHitTest={placement ? undefined : onCameraARHitTest}
       onAnchorFound={onPlane}
       onAnchorUpdated={onPlane}
       onAnchorRemoved={onPlaneRemoved}
-      onCameraTransformUpdate={onCameraTransformUpdate}
+      onCameraTransformUpdate={placement && movableHost ? onCameraTransformUpdate : undefined}
     >
       <ViroAmbientLight color="#ffffff" intensity={350} />
 
@@ -405,7 +410,7 @@ export function VistaARScene() {
             intensity={500}
             castsShadow
             shadowOpacity={0.45}
-            shadowMapSize={2048}
+            shadowMapSize={1024}
             shadowNearZ={2}
             shadowFarZ={7}
           />
@@ -413,10 +418,10 @@ export function VistaARScene() {
             pose && movableHost && obj.id === movableHost.id ? (
               // El nodo lleva la pose que mueve el seguimiento; el modelo queda en su origen
               <ViroNode key={obj.id} ref={hostNode} position={[pose.x, 0, pose.z]} rotation={[0, pose.yaw, 0]}>
-                <SceneModel obj={atOrigin(movableHost)} isHost hostAnimation={animation} mouth={mouth} />
+                <SceneModel obj={atOrigin(movableHost)} isHost hostAnimation={animation} />
               </ViroNode>
             ) : (
-              <SceneModel key={obj.id} obj={obj} isHost={obj.id === hostId} hostAnimation={animation} mouth={mouth} />
+              <SceneModel key={obj.id} obj={obj} isHost={obj.id === hostId} hostAnimation={animation} />
             ),
           )}
           {/* Sombra sobre el piso real para que el personaje no se vea flotando */}
@@ -431,11 +436,9 @@ type SceneModelProps = {
   obj: SceneObject;
   isHost: boolean;
   hostAnimation: ArSessionState["animation"];
-  /** Peso de la shape key "boca_abierta" del anfitrión (lipsync) */
-  mouth: number;
 };
 
-function SceneModel({ obj, isHost, hostAnimation, mouth }: SceneModelProps) {
+function SceneModel({ obj, isHost, hostAnimation }: SceneModelProps) {
   const entrance = obj.kind === "dynamic" ? obj.entrance : undefined;
   const [loaded, setLoaded] = useState(false);
   const model = useRef<Viro3DObject>(null);
@@ -443,6 +446,17 @@ function SceneModel({ obj, isHost, hostAnimation, mouth }: SceneModelProps) {
   const walking = !!entrance && loaded && !arrived;
   const [x, y, z] = obj.transform.position;
   const entranceName = entrance && registerEntrance(obj.id, [x, y, z], entrance.durationMs);
+
+  // Lipsync: la boca (shape key "boca_abierta", scripts/add-mouth.py) va directo al nodo nativo, sin
+  // re-renderizar. Por eso morphTargets no va en las props: un render la volvería a cerrar
+  useEffect(() => {
+    if (!isHost || !loaded) return;
+    // setNativeProps está tipado con todas las props del modelo, pero acepta solo las que cambian
+    const setMouth = (weight: number) =>
+      model.current?.setNativeProps({ morphTargets: [{ target: "boca_abierta", weight }] } as ComponentProps<typeof Viro3DObject>);
+    arSession.onMouth(setMouth);
+    return () => arSession.onMouth(null);
+  }, [isHost, loaded]);
 
   const loop = obj.kind === "dynamic" && obj.animation;
   const modelAnimation = isHost
@@ -468,8 +482,6 @@ function SceneModel({ obj, isHost, hostAnimation, mouth }: SceneModelProps) {
         rotation={obj.transform.rotation}
         scale={obj.transform.scale}
         animation={modelAnimation}
-        // Shape key que abre la boca (scripts/add-mouth.py)
-        morphTargets={isHost ? [{ target: "boca_abierta", weight: mouth }] : undefined}
         onClick={isHost ? () => arSession.wave() : undefined}
         onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
         onLoadEnd={() => {

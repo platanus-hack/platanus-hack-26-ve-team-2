@@ -78,7 +78,10 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const focused = useIsFocused();
   // Lo primero al entrar a la simulación: pedir el micrófono
   const mic = useMicrophonePermission();
-  const conversation = useSimulationConversation(active.simulationId);
+  // Lipsync: el visema que suena mueve la boca del anfitrión directo en el modelo nativo
+  const conversation = useSimulationConversation(active.simulationId, (viseme) =>
+    arSession.setMouth(mouthOpenness(viseme)),
+  );
   const [scenesOpen, setScenesOpen] = useState(false);
 
   const tracking = useArSession((s) => s.tracking);
@@ -94,7 +97,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
 
   const { region } = active;
   const current = region.simulations.find((s) => s.id === active.simulationId);
-  const { phase, lastTurn, error, viseme } = conversation;
+  const { phase, lastTurn, error } = conversation;
   const hasObjects = active.objects.length > 0;
 
   const cooledDown = useArCooldown();
@@ -115,7 +118,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     arSession.loadObjects(active.objects);
   }, [active.objects]);
 
-  // Lipsync: el visema que suena mueve la boca del anfitrión y, mientras habla, gesticula
+  // Mientras habla, gesticula
   const speaking = phase === "speaking";
   const wasSpeaking = useRef(false);
   useEffect(() => {
@@ -125,9 +128,6 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     if (__DEV__) console.log("[AR] lipsync", speaking ? "empieza a hablar" : "deja de hablar");
     arSession.talk(speaking);
   }, [speaking]);
-  useEffect(() => {
-    if (speaking) arSession.set({ mouth: mouthOpenness(viseme) });
-  }, [speaking, viseme]);
 
   // "Sígueme" / "quédate aquí" en la conversación activan o desactivan el modo seguir
   useEffect(() => {
@@ -184,6 +184,8 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
           // Pero sí la profundidad: da hits "DepthPoint" en pisos lisos (alfombra, baldosa) donde ARCore
           // casi no encuentra puntos de textura, y así el piso se detecta mucho antes
           depthEnabled
+          // Sin materiales emisivos el bloom no se ve: es una pasada de post-proceso menos por frame
+          bloomEnabled={false}
           style={StyleSheet.absoluteFill}
         />
       )}
