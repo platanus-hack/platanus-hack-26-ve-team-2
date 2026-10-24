@@ -4,6 +4,7 @@ export interface Site {
   id: string;
   name: string;
   note: string;
+  description: string;
   coordinate: LatLng;
 }
 

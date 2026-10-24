@@ -1,32 +1,118 @@
-import { Image } from "expo-image";
-import { router, useLocalSearchParams } from "expo-router";
+import { ViroARSceneNavigator } from "@reactvision/react-viro";
+import { router, useIsFocused, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { CameraShade, FigureSilhouette, SimulationsSheet } from "@/components/ar";
+import { CameraShade, SimulationsSheet } from "@/components/ar";
+import { VistaARScene } from "@/components/ar/VistaARScene";
 import { CircleButton, Icon, PrimaryButton, PrimaryLabel, StatusRow } from "@/components/common";
-import { simulations, sites } from "@/data/sites";
+import { findSite, simulations, UNLOCK_RADIUS_M } from "@/data/sites";
+import { arSession, useArSession } from "@/hooks/useArSession";
+import { useUserLocation } from "@/hooks/useUserLocation";
 import { colors, fonts } from "@/theme";
+import { distanceInMeters } from "@/utils/geo";
 
-// Vista previa estática: la cámara AR real (Viro) se conecta más adelante
+type CameraPermission = "pending" | "granted" | "denied";
+
+function useCameraPermission(): CameraPermission {
+  const [permission, setPermission] = useState<CameraPermission>(Platform.OS === "android" ? "pending" : "granted");
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    const { CAMERA } = PermissionsAndroid.PERMISSIONS;
+
+    // Si otro permiso (ubicación) se pide a la vez, Android puede dejar esta promesa sin resolver,
+    // así que primero revisamos y volvemos a revisar cuando la app regresa al frente.
+    async function sync(askIfMissing: boolean) {
+      if (await PermissionsAndroid.check(CAMERA)) return setPermission("granted");
+      if (!askIfMissing) return;
+      const result = await PermissionsAndroid.request(CAMERA);
+      setPermission(result === PermissionsAndroid.RESULTS.GRANTED ? "granted" : "denied");
+    }
+
+    sync(true);
+    const sub = AppState.addEventListener("change", (state) => state === "active" && sync(false));
+    return () => sub.remove();
+  }, []);
+
+  return permission;
+}
+
+function formatDistance(meters: number): string {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${Math.round(meters)} m`;
+}
+
 export function ArCameraScreen() {
   const insets = useSafeAreaInsets();
   const { siteId } = useLocalSearchParams<{ siteId?: string }>();
-  const site = sites.find((s) => s.id === siteId) ?? sites[0];
-  const [started, setStarted] = useState(false);
+  const site = findSite(siteId);
+  const camera = useCameraPermission();
+  // Solo una sesión de RA a la vez: si hay otra pantalla encima, esta suelta la cámara
+  const focused = useIsFocused();
+  const location = useUserLocation();
   const [scenesOpen, setScenesOpen] = useState(false);
   const [scene, setScene] = useState(simulations[0].title);
+
+  const tracking = useArSession((s) => s.tracking);
+  const floorFound = useArSession((s) => s.floorY !== null);
+  const hasFloor = useArSession((s) => s.floor !== null);
+  const occlusion = useArSession((s) => s.occlusion);
+  const depthSupported = occlusion === "supported";
+  const placed = useArSession((s) => s.placement !== null);
+  const modelStatus = useArSession((s) => s.modelStatus);
+
+  useEffect(() => {
+    arSession.reset();
+    return () => arSession.reset();
+  }, []);
+
+  const distance = location.coords ? distanceInMeters(location.coords, site.coordinate) : null;
+  // Damos margen por la imprecisión del GPS (sobre todo dentro de edificios)
+  const unlocked = distance !== null && distance <= Math.max(UNLOCK_RADIUS_M, location.accuracy ?? 0);
+
+  const status = (() => {
+    if (camera === "denied") return { title: "Sin acceso a la cámara", subtitle: "Actívalo en los ajustes del teléfono" };
+    if (location.status === "denied")
+      return { title: "Sin acceso a tu ubicación", subtitle: "La necesitamos para saber si estás en el sitio" };
+    if (distance === null) return { title: "Buscando tu ubicación…", subtitle: "Esto puede tardar unos segundos" };
+    if (!unlocked)
+      return { title: `Estás a ${formatDistance(distance)} de ${site.name}`, subtitle: "Acércate para activar la experiencia" };
+    if (camera === "pending") return { title: "Preparando la cámara…", subtitle: "Acepta el permiso si te lo pide" };
+    if (!tracking) return { title: "Escaneando el entorno…", subtitle: "Mueve el teléfono despacio" };
+    if (!floorFound)
+      return { title: "Escaneando el piso…", subtitle: "Apunta al piso y mueve el teléfono de lado a lado" };
+    if (!hasFloor) return { title: "Apunta la cámara al piso", subtitle: "Busca una zona despejada a 1 o 2 metros" };
+    return { title: "Simulación alineada", subtitle: "Toca para comenzar la experiencia" };
+  })();
+  // Esperamos a saber si hay oclusión: activarla con el personaje ya colocado lo oculta entero
+  const canStart = unlocked && tracking && hasFloor && occlusion !== "checking";
+
+  const placedHint = (() => {
+    if (modelStatus === "error") return "No se pudo cargar el personaje";
+    if (modelStatus !== "ready") return "Cargando el personaje…";
+    // Al pasar el teléfono a otra persona ARCore puede perder el rastreo un momento
+    if (!tracking) return "Recuperando el rastreo, mueve el teléfono despacio";
+    return "Toca al personaje para que salude de nuevo";
+  })();
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      <Image
-        source={require("@/assets/images/camera-preview.jpg")}
-        style={StyleSheet.absoluteFill}
-        contentFit="cover"
-      />
+      {focused && camera === "granted" && unlocked && (
+        <ViroARSceneNavigator
+          autofocus
+          initialScene={{ scene: VistaARScene }}
+          // Sin anchors en la nube: todo es local al teléfono
+          provider="none"
+          // Mesas, sillas o personas más cerca que el personaje lo tapan, como en la vida real.
+          // Se activa antes de colocar al personaje: cambiarla con el modelo ya cargado lo oculta entero
+          // (bug de Viro). El margen para que el piso no tape los pies lo pone scripts/patch-viro-occlusion.js
+          occlusionMode={depthSupported ? "depthBased" : "disabled"}
+          style={StyleSheet.absoluteFill}
+        />
+      )}
       <CameraShade />
 
       <View style={[styles.top, { paddingTop: insets.top + 12 }]}>
@@ -42,45 +128,40 @@ export function ArCameraScreen() {
         </CircleButton>
       </View>
 
-      <View style={[styles.stage, { top: insets.top + 90, bottom: insets.bottom + 190 }]}>
-        {!started ? (
-          <>
+      <View style={[styles.stage, { top: insets.top + 90, bottom: insets.bottom + 190 }]} pointerEvents="none">
+        {!placed ? (
+          unlocked &&
+          !hasFloor && (
             <View style={styles.direction}>
               <Icon name="arrow" size={18} color="white" />
-              <Text style={styles.directionText}>Gira un poco a tu derecha</Text>
+              <Text style={styles.directionText}>Apunta al piso frente a ti</Text>
             </View>
-            <View style={styles.target}>
-              <View style={[styles.corner, styles.cornerTL]} />
-              <View style={[styles.corner, styles.cornerTR]} />
-              <View style={[styles.corner, styles.cornerBL]} />
-              <View style={[styles.corner, styles.cornerBR]} />
-            </View>
-            <View style={styles.figure}>
-              <FigureSilhouette active={false} />
-            </View>
-          </>
+          )
         ) : (
-          <View style={styles.figure}>
-            <FigureSilhouette active />
-            <View style={styles.speech}>
-              <Text style={styles.speechName}>Simón Bolívar</Text>
-              <Text style={styles.speechText}>“Esta plaza vio nacer una república...”</Text>
-            </View>
+          <View style={styles.speech}>
+            <Text style={styles.speechName}>Guía virtual</Text>
+            <Text style={styles.speechText}>“¡Hola! Bienvenido a {site.name}.”</Text>
           </View>
         )}
       </View>
 
       <View style={[styles.bottom, { paddingBottom: insets.bottom + 28 }]}>
-        {!started ? (
+        {!placed ? (
           <>
             <View style={styles.ready}>
-              <StatusRow dark title="Simulación alineada" subtitle="Toca para comenzar la experiencia" />
+              <StatusRow dark title={status.title} subtitle={status.subtitle} />
             </View>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Iniciar simulación"
-              onPress={() => setStarted(true)}
-              style={({ pressed }) => [styles.shutter, pressed && { transform: [{ scale: 0.95 }] }]}
+              accessibilityState={{ disabled: !canStart }}
+              disabled={!canStart}
+              onPress={() => arSession.place()}
+              style={({ pressed }) => [
+                styles.shutter,
+                !canStart && { opacity: 0.4 },
+                pressed && { transform: [{ scale: 0.95 }] },
+              ]}
             >
               <View style={styles.shutterInner} />
             </Pressable>
@@ -91,7 +172,7 @@ export function ArCameraScreen() {
             <View style={styles.sceneLabel}>
               <Text style={styles.nowPlaying}>REPRODUCIENDO</Text>
               <Text style={styles.sceneTitle}>{scene}</Text>
-              <Text style={styles.remaining}>Quedan 02:14</Text>
+              <Text style={styles.remaining}>{placedHint}</Text>
             </View>
             <PrimaryButton onPress={() => setScenesOpen(true)}>
               <Icon name="layers" color="white" />
@@ -115,7 +196,6 @@ export function ArCameraScreen() {
     </View>
   );
 }
-
 
 const glass = {
   backgroundColor: "rgba(19,33,27,0.6)",
@@ -160,18 +240,10 @@ const styles = StyleSheet.create({
     borderRadius: 22,
   },
   directionText: { color: "white", fontSize: 12, fontFamily: fonts.medium },
-  target: { position: "absolute", width: 210, height: 290 },
-  corner: { position: "absolute", width: 35, height: 35, borderColor: "#f4bc76" },
-  cornerTL: { left: 0, top: 0, borderLeftWidth: 2, borderTopWidth: 2 },
-  cornerTR: { right: 0, top: 0, borderRightWidth: 2, borderTopWidth: 2 },
-  cornerBL: { left: 0, bottom: 0, borderLeftWidth: 2, borderBottomWidth: 2 },
-  cornerBR: { right: 0, bottom: 0, borderRightWidth: 2, borderBottomWidth: 2 },
-  figure: { marginTop: 80 },
   speech: {
     position: "absolute",
-    right: -95,
-    top: 30,
-    width: 175,
+    top: "4%",
+    maxWidth: 260,
     backgroundColor: "rgba(248,245,236,0.88)",
     padding: 13,
     borderRadius: 14,

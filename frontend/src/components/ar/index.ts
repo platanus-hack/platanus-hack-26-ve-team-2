@@ -1,4 +1,3 @@
 export { CameraShade } from "./CameraShade";
-export { FigureSilhouette } from "./FigureSilhouette";
 export { SimulationsSheet } from "./SimulationsSheet";
-// HelloARScene se importa directo de "./HelloARScene": carga el módulo nativo de Viro
+// HelloARScene y VistaARScene se importan directo de su archivo: cargan el módulo nativo de Viro

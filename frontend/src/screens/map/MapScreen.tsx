@@ -7,7 +7,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Brand, CircleButton, Icon, PrimaryButton, PrimaryLabel, StatusRow } from "@/components/common";
 import { PIN_ANCHOR, SitePin, UserDot, vistaMapStyle } from "@/components/map";
-import { sites, userLocation } from "@/data/sites";
+import { fallbackLocation, nearestSiteIndex, sites } from "@/data/sites";
+import { useUserLocation } from "@/hooks/useUserLocation";
 import { colors, fonts } from "@/theme";
 import { distanceInMeters, walkingMinutes } from "@/utils/geo";
 
@@ -24,34 +25,47 @@ export function MapScreen() {
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapView>(null);
   const [mode, setMode] = useState<Mode>("map");
-  const [selected, setSelected] = useState(0);
+  const [picked, setPicked] = useState<number | null>(null);
   const [cardHeight, setCardHeight] = useState(320);
   // En Android, cambiar mapPadding antes de onMapReady crashea react-native-maps
   const [mapReady, setMapReady] = useState(false);
 
+  const location = useUserLocation();
+  const userLocation = location.coords ?? fallbackLocation;
+  // Mientras el usuario no elija un pin, mostramos el sitio más cercano
+  const selected = picked ?? nearestSiteIndex(userLocation);
   const site = sites[selected];
+  const hasFix = location.coords !== null;
   const meters = distanceInMeters(userLocation, site.coordinate);
 
-  // Encuadra todos los sitios y al usuario al cargar o al volver al modo mapa
+  // Encuadra al usuario y al sitio elegido. No depende de cada lectura del GPS
+  // para no mover el mapa mientras el usuario lo explora.
   useEffect(() => {
-    if (mode !== "map" || !mapReady) return;
-    mapRef.current?.fitToCoordinates([userLocation, ...sites.map((s) => s.coordinate)], {
-      edgePadding: { top: insets.top + 110, right: 90, bottom: 50, left: 90 },
-      animated: true,
-    });
-  }, [mode, mapReady, insets.top]);
-
-  useEffect(() => {
-    if (mode !== "route" || !mapReady) return;
+    if (!mapReady) return;
+    // Con puntos muy cercanos fitToCoordinates no mueve el mapa en Android
+    if (distanceInMeters(userLocation, site.coordinate) < 250) {
+      mapRef.current?.animateCamera(
+        {
+          center: {
+            latitude: (userLocation.latitude + site.coordinate.latitude) / 2,
+            longitude: (userLocation.longitude + site.coordinate.longitude) / 2,
+          },
+          zoom: 18,
+        },
+        { duration: 500 },
+      );
+      return;
+    }
     mapRef.current?.fitToCoordinates([userLocation, site.coordinate], {
       // se suma al mapPadding, que ya reserva el alto de la tarjeta
-      edgePadding: { top: insets.top + 120, right: 70, bottom: 60, left: 70 },
+      edgePadding: { top: insets.top + 120, right: 90, bottom: 60, left: 90 },
       animated: true,
     });
-  }, [mode, site, mapReady, insets.top]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, site, mapReady, hasFix, insets.top]);
 
   function selectSite(index: number) {
-    setSelected(index);
+    setPicked(index);
     setMode("map");
   }
 
@@ -141,7 +155,7 @@ export function MapScreen() {
         </View>
         <Text style={styles.title}>{site.name}</Text>
         <Text style={styles.description}>
-          Viaja a 1810 y presencia el momento en que cambió la historia. Una experiencia inmersiva en el corazón de Caracas.
+          {site.description}
         </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.meta}>
           <View style={styles.chip}>
