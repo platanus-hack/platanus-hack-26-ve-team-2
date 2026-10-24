@@ -2,7 +2,7 @@ import { ViroARSceneNavigator } from "@reactvision/react-viro";
 import { Redirect, router, useIsFocused } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
-import { AppState, PermissionsAndroid, Platform, StyleSheet, Text, View } from "react-native";
+import { AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CameraShade, MicPermissionPrompt, PushToTalkButton, SimulationsSheet } from "@/components/ar";
@@ -17,8 +17,6 @@ import { colors, fonts } from "@/theme";
 
 type CameraPermission = "pending" | "granted" | "denied";
 
-// Tiempo con el piso detectado de forma continua antes de colocar al personaje
-const PLACE_DELAY_MS = 700;
 
 function useCameraPermission(): CameraPermission {
   const [permission, setPermission] = useState<CameraPermission>(Platform.OS === "android" ? "pending" : "granted");
@@ -97,21 +95,13 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     if (camera === "pending") return { title: "Preparando la cámara…", subtitle: "Acepta el permiso si te lo pide" };
     if (mic.status === "checking") return { title: "Preparando el micrófono…", subtitle: "Acepta el permiso si te lo pide" };
     if (!tracking) return { title: "Escaneando el entorno…", subtitle: "Mueve el teléfono despacio" };
+    if (hasFloor) return { title: "Simulación alineada", subtitle: "Toca para comenzar la experiencia" };
     if (!floorFound)
       return { title: "Escaneando el piso…", subtitle: "Apunta al piso y mueve el teléfono de lado a lado" };
-    if (!hasFloor) return { title: "Apunta la cámara al piso", subtitle: "Busca una zona despejada a 1 o 2 metros" };
-    return { title: "Colocando al personaje…", subtitle: "Mantén la cámara apuntando al piso" };
+    return { title: "Apunta la cámara al piso", subtitle: "Busca una zona despejada a 1 o 2 metros" };
   })();
   // Esperamos a saber si hay oclusión: activarla con el personaje ya colocado lo oculta entero
-  const canPlace = !placed && hasObjects && tracking && hasFloor && occlusion !== "checking";
-
-  // El personaje aparece solo apenas hay un piso estable: el usuario no tiene que tocar nada.
-  // La espera evita anclarlo en el primer hit test, que todavía oscila.
-  useEffect(() => {
-    if (!canPlace) return;
-    const timer = setTimeout(() => arSession.place(), PLACE_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [canPlace]);
+  const canStart = hasObjects && tracking && hasFloor && occlusion !== "checking";
 
   const placedHint = (() => {
     if (modelStatus === "error") return "No se pudo cargar el personaje";
@@ -180,6 +170,20 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
             <View style={styles.ready}>
               <StatusRow dark title={status.title} subtitle={status.subtitle} />
             </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Iniciar simulación"
+              accessibilityState={{ disabled: !canStart }}
+              disabled={!canStart}
+              onPress={() => arSession.place()}
+              style={({ pressed }) => [
+                styles.shutter,
+                !canStart && { opacity: 0.4 },
+                pressed && { transform: [{ scale: 0.95 }] },
+              ]}
+            >
+              <View style={styles.shutterInner} />
+            </Pressable>
             <Text style={styles.hint}>Mantén el teléfono en alto y muévete despacio</Text>
           </>
         ) : (
@@ -283,7 +287,19 @@ const styles = StyleSheet.create({
   speechName: { fontFamily: fonts.displayBold, fontSize: 13, color: colors.ink },
   speechText: { fontFamily: fonts.regular, fontSize: 11, lineHeight: 15, color: colors.ink },
   bottom: { position: "absolute", left: 0, right: 0, bottom: 0, paddingTop: 20, paddingHorizontal: 24, zIndex: 3 },
-  ready: { alignItems: "center", marginBottom: 14 },
+  ready: { alignItems: "center" },
+  shutter: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    borderWidth: 3,
+    borderColor: "white",
+    padding: 6,
+    alignSelf: "center",
+    marginTop: 18,
+    marginBottom: 12,
+  },
+  shutterInner: { flex: 1, borderRadius: 31, backgroundColor: colors.orange },
   hint: { color: "#c7cfca", fontSize: 11, fontFamily: fonts.regular, textAlign: "center" },
   sceneLabel: { marginBottom: 15 },
   nowPlaying: { color: "#f4b47f", fontSize: 9, letterSpacing: 1.3, fontFamily: fonts.bold },

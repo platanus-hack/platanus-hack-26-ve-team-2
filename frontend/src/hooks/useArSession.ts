@@ -20,7 +20,7 @@ export type ArSessionState = {
   /** Dónde quedó anclado el personaje (y su giro para mirar a la cámara) */
   placement: { id: number; point: Vec3; yaw: number } | null;
   /** Viro solo arranca una animación cuando `run` pasa de false a true */
-  animation: { name: "saludo" | "reposo"; run: boolean };
+  animation: { name: "saludo"; run: boolean };
   modelStatus: "idle" | "loading" | "ready" | "error";
 };
 
@@ -31,7 +31,7 @@ const initialState: ArSessionState = {
   occlusion: "checking",
   floor: null,
   placement: null,
-  animation: { name: "reposo", run: false },
+  animation: { name: "saludo", run: false },
   modelStatus: "idle",
 };
 
@@ -80,7 +80,6 @@ export const arSession = {
     set({ animation: { name: "saludo", run: false } });
     setTimeout(() => set({ animation: { name: "saludo", run: true } }), 50);
   },
-  rest: () => set({ animation: { name: "reposo", run: true } }),
 };
 
 export function useArSession<T>(selector: (s: ArSessionState) => T): T {

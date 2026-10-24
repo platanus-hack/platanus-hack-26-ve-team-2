@@ -21,6 +21,17 @@ const MIN_FLOOR_DROP = 0.6;
 const FLOOR_TOLERANCE = 0.15;
 // Ignoramos planos diminutos, que suelen ser ruido
 const MIN_PLANE_AREA = 0.2;
+// En algunos Android ARCore alterna NORMAL/UNAVAILABLE varias veces por segundo: solo damos el
+// rastreo por perdido si sigue así este tiempo, si no el personaje nunca llega a colocarse
+const TRACKING_LOST_GRACE_MS = 1000;
+// Si ARCore todavía no confirmó un plano de piso, aceptamos estos hits (menos precisos) para que
+// el usuario igual pueda colocar al personaje tocando el botón
+// Cuando el rastreo de ARCore diverge devuelve hits a decenas de metros: no son el piso
+const MAX_HIT_DISTANCE = 4;
+// La mayoría de los frames no traen hit: mantenemos el último punto un rato para que el
+// anillo (y el botón) no parpadeen
+const FLOOR_HOLD_MS = 1500;
+const FALLBACK_HIT_TYPES = new Set(["ExistingPlane", "EstimatedHorizontalPlane", "FeaturePoint", "DepthPoint"]);
 
 ViroMaterials.createMaterials({
   reticle: { lightingModel: "Constant", diffuseColor: "#E66F3DDD", cullMode: "None" },
@@ -52,7 +63,14 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
   const hostId = objects.find((o) => o.kind === "dynamic")?.id;
   const tracking = useArSession((s) => s.tracking);
   const lastUpdate = useRef(0);
+  const lastHitLog = useRef(0);
+  const lastFloorAt = useRef(0);
   const planes = useRef(new Map<string, number>());
+  const trackingLostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (trackingLostTimer.current) clearTimeout(trackingLostTimer.current);
+  }, []);
 
   useEffect(() => {
     arSceneNavigator
@@ -63,6 +81,7 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
 
   // El piso es el plano horizontal más bajo: así nunca colocamos al personaje sobre una mesa
   function onPlane(anchor: ViroAnchor) {
+    if (__DEV__) console.log("[AR] plano", JSON.stringify(anchor));
     if (anchor.type !== "plane" || !anchor.alignment?.startsWith("Horizontal")) return;
     if ((anchor.width ?? 0) * (anchor.height ?? 0) < MIN_PLANE_AREA) return;
     planes.current.set(anchor.anchorId, anchor.position[1]);
@@ -79,7 +98,17 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
 
   function onTrackingUpdated(trackingState: unknown, reason?: unknown) {
     if (__DEV__) console.log("[AR] tracking", { state: trackingState, reason });
-    arSession.set({ tracking: trackingState === ViroTrackingStateConstants.TRACKING_NORMAL });
+    if (trackingState === ViroTrackingStateConstants.TRACKING_NORMAL) {
+      if (trackingLostTimer.current) clearTimeout(trackingLostTimer.current);
+      trackingLostTimer.current = null;
+      arSession.set({ tracking: true });
+      return;
+    }
+    if (trackingLostTimer.current) return;
+    trackingLostTimer.current = setTimeout(() => {
+      trackingLostTimer.current = null;
+      arSession.set({ tracking: false });
+    }, TRACKING_LOST_GRACE_MS);
   }
 
   // Se dispara cada frame con el hit test del centro de la pantalla
@@ -91,19 +120,34 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
 
     const camera = cameraOrientation.position as Vec3;
     const { floorY } = arSession.get();
-    // Solo planos reales medidos por ARCore (no estimados): la distancia, y por tanto la escala, es correcta
-    const hit =
+    if (__DEV__ && now - lastHitLog.current > 1000) {
+      lastHitLog.current = now;
+      console.log(
+        "[AR] hit",
+        JSON.stringify({ camera, floorY, hits: hitTestResults.map((r) => [r.type, r.transform?.position]) }),
+      );
+    }
+    const belowCamera = (y: number) => camera[1] - y > MIN_FLOOR_DROP;
+    const near = ([x, y, z]: number[]) =>
+      Math.hypot(x - camera[0], y - camera[1], z - camera[2]) < MAX_HIT_DISTANCE;
+    const hits = hitTestResults.filter((r) => near(r.transform.position));
+    // Preferimos planos reales medidos por ARCore (no estimados): la distancia, y por tanto la escala, es correcta
+    const floorHit =
       floorY === null
         ? undefined
-        : hitTestResults.find((r) => {
+        : hits.find((r) => {
             const y = r.transform.position[1];
-            return (
-              r.type === "ExistingPlaneUsingExtent" &&
-              Math.abs(y - floorY) < FLOOR_TOLERANCE &&
-              camera[1] - y > MIN_FLOOR_DROP
-            );
+            return r.type === "ExistingPlaneUsingExtent" && Math.abs(y - floorY) < FLOOR_TOLERANCE && belowCamera(y);
           });
-    arSession.set({ floor: hit ? { point: hit.transform.position as Vec3, camera } : null });
+    const hit =
+      floorHit ??
+      hits.find((r) => FALLBACK_HIT_TYPES.has(r.type) && belowCamera(r.transform.position[1]));
+    if (hit) {
+      lastFloorAt.current = now;
+      arSession.set({ floor: { point: hit.transform.position as Vec3, camera } });
+    } else if (now - lastFloorAt.current > FLOOR_HOLD_MS) {
+      arSession.set({ floor: null });
+    }
   }
 
   return (
@@ -164,12 +208,8 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
                 scale={obj.transform.scale}
                 animation={
                   isHost
-                    ? {
-                        name: animation.name,
-                        run: animation.run,
-                        loop: animation.name === "reposo",
-                        onFinish: () => animation.name === "saludo" && arSession.rest(),
-                      }
+                    ? // Solo saluda (al aparecer y al tocarlo); sin animación de reposo se queda en la pose final
+                      { name: animation.name, run: animation.run, loop: false }
                     : loop
                       ? { name: loop, run: true, loop: true }
                       : undefined
