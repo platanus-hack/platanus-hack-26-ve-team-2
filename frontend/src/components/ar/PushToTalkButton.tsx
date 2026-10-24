@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import { Icon } from "@/components/common";
@@ -23,8 +23,15 @@ export function PushToTalkButton({ phase, onPressIn, onPressOut }: Props) {
   const busy = phase === "sending";
   // Si el dedo sigue apoyado: evita avisar dos veces el fin (al soltar y si el sistema cancela el toque)
   const holding = useRef(false);
+  useEffect(() => {
+    if (__DEV__) console.log("[PTT] montado");
+    return () => {
+      if (__DEV__) console.log("[PTT] desmontado");
+    };
+  }, []);
 
-  function release() {
+  function release(reason: string) {
+    if (__DEV__) console.log("[PTT] fin del toque", reason, holding.current);
     if (!holding.current) return;
     holding.current = false;
     onPressOut();
@@ -43,13 +50,14 @@ export function PushToTalkButton({ phase, onPressIn, onPressOut }: Props) {
         hitSlop={12}
         onStartShouldSetResponder={() => !busy}
         onResponderGrant={() => {
+          if (__DEV__) console.log("[PTT] toque");
           holding.current = true;
           onPressIn();
         }}
-        onResponderRelease={release}
+        onResponderRelease={() => release("soltó")}
         // No le cede el toque a nadie mientras se graba
         onResponderTerminationRequest={() => false}
-        onResponderTerminate={release}
+        onResponderTerminate={() => release("cancelado por el sistema")}
         style={[styles.ring, recording && styles.ringRecording]}
       >
         <View style={[styles.button, recording && styles.buttonRecording, busy && styles.buttonBusy]}>

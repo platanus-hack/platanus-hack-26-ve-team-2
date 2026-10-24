@@ -240,24 +240,19 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
               <Text style={styles.directionText}>Apunta al piso frente a ti</Text>
             </View>
           )
-        ) : isEditing ? (
-          <View style={styles.tip}>
-            <Text style={styles.tipTitle}>Modo mover</Text>
-            {moveNotice ? (
-              <Text style={styles.tipText}>{moveNotice}</Text>
-            ) : (
-              <>
-                <Text style={styles.tipText}>Toca el piso donde quieras ponerlo, aunque sea a tu espalda: gira y toca</Text>
-                <Text style={styles.tipText}>Desliza un dedo para ajustarlo y usa los botones para orientarlo</Text>
-              </>
-            )}
-          </View>
         ) : (
-          !inBattle &&
-          (lastTurn || phase === "sending") && (
-            <View style={styles.speech}>
-              <Text style={styles.speechName}>{lastTurn?.character_name ?? "…"}</Text>
-              <Text style={styles.speechText}>{phase === "sending" ? "…" : `“${lastTurn?.reply_text}”`}</Text>
+          // Sin subtítulos de lo que responde el personaje: solo se escucha
+          isEditing && (
+            <View style={styles.tip}>
+              <Text style={styles.tipTitle}>Modo mover</Text>
+              {moveNotice ? (
+                <Text style={styles.tipText}>{moveNotice}</Text>
+              ) : (
+                <>
+                  <Text style={styles.tipText}>Toca el piso donde quieras ponerlo, aunque sea a tu espalda: gira y toca</Text>
+                  <Text style={styles.tipText}>Desliza un dedo para ajustarlo y usa los botones para orientarlo</Text>
+                </>
+              )}
             </View>
           )
         )}
@@ -429,18 +424,6 @@ const styles = StyleSheet.create({
     borderRadius: 22,
   },
   directionText: { color: "white", fontSize: 12, fontFamily: fonts.medium },
-  speech: {
-    position: "absolute",
-    top: "4%",
-    maxWidth: 260,
-    backgroundColor: "rgba(248,245,236,0.88)",
-    padding: 13,
-    borderRadius: 14,
-    borderBottomLeftRadius: 3,
-    gap: 4,
-  },
-  speechName: { fontFamily: fonts.displayBold, fontSize: 13, color: colors.ink },
-  speechText: { fontFamily: fonts.regular, fontSize: 11, lineHeight: 15, color: colors.ink },
   tip: {
     ...glass,
     backgroundColor: "rgba(21,36,29,0.82)",
