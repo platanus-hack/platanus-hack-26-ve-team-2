@@ -102,7 +102,16 @@ export function useSpeechPlayer(onViseme?: (viseme: VisemeId) => void) {
     };
   }, [playing, visemes, player]);
 
-  useEffect(() => stop, [stop]);
+  // Al desmontar solo se borran los archivos: useAudioPlayer ya liberó el reproductor nativo
+  // (pause() sobre él lanza "Cannot use shared object that was already released")
+  useEffect(
+    () => () => {
+      for (const clip of [current.current, ...queue.current]) if (clip?.file.exists) clip.file.delete();
+      current.current = null;
+      queue.current = [];
+    },
+    [],
+  );
 
   return { play, enqueue, stop, playing: active || playing };
 }
