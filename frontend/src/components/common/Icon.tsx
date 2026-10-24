@@ -15,7 +15,11 @@ export type IconName =
   | "nav"
   | "chevron"
   | "sound"
-  | "mic";
+  | "mic"
+  | "eye"
+  | "move"
+  | "rotateLeft"
+  | "rotateRight";
 
 const paths: Record<IconName, ReactNode> = {
   search: (
@@ -58,6 +62,25 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <Path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
       <Path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+    </>
+  ),
+  eye: (
+    <>
+      <Path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" />
+      <Circle cx="12" cy="12" r="3" />
+    </>
+  ),
+  move: <Path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3" />,
+  rotateLeft: (
+    <>
+      <Path d="M3 4v5h5" />
+      <Path d="M3.5 13a8.5 8.5 0 1 0 2-7.5L3 9" />
+    </>
+  ),
+  rotateRight: (
+    <>
+      <Path d="M21 4v5h-5" />
+      <Path d="M20.5 13a8.5 8.5 0 1 1-2-7.5L21 9" />
     </>
   ),
   sound: (

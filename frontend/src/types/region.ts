@@ -5,6 +5,8 @@ export interface SimulationSummary {
   id: string;
   title: string;
   description: string;
+  /** general = conversación con el presentador (Bolívar) con la que se entra; scene = escena histórica */
+  kind: "general" | "scene";
 }
 
 /** Área cerrada del mapa donde se pueden iniciar simulaciones. */

@@ -28,6 +28,9 @@ const bolivar: DynamicSceneObject = {
 const DUEL_GAP = 1.2;
 
 const SIMULATION_OBJECTS: Record<string, SceneObject[]> = {
+  // Conversación general: Bolívar como presentador. Es el mismo anfitrión que en las escenas, así
+  // que al elegir una escena se queda donde está
+  bolivar_general: [bolivar],
   carabobo_prueba: [bolivar],
   batalla: [
     // Gira para mirar hacia donde llega Monteverde (+X); el modelo mira hacia +Z

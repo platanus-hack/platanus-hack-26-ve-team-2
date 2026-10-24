@@ -1,4 +1,5 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { useRef } from "react";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import { Icon } from "@/components/common";
 import type { ConversationPhase } from "@/hooks/useSimulationConversation";
@@ -20,23 +21,41 @@ type Props = {
 export function PushToTalkButton({ phase, onPressIn, onPressOut }: Props) {
   const recording = phase === "recording";
   const busy = phase === "sending";
+  // Si el dedo sigue apoyado: evita avisar dos veces el fin (al soltar y si el sistema cancela el toque)
+  const holding = useRef(false);
+
+  function release() {
+    if (!holding.current) return;
+    holding.current = false;
+    onPressOut();
+  }
 
   return (
     <View style={styles.wrap}>
-      <Pressable
+      {/* Responder propio en vez de Pressable: Pressable da el toque por terminado si el dedo se corre
+          un poco fuera del botón o si otra vista pide el toque, y cortaba la pregunta antes de soltar.
+          Aquí se graba mientras el dedo siga apoyado, se mueva a donde se mueva */}
+      <View
+        accessible
         accessibilityRole="button"
         accessibilityLabel="Mantén presionado para preguntar"
         accessibilityState={{ busy, disabled: busy }}
-        disabled={busy}
-        onPressIn={onPressIn}
-        onPressOut={onPressOut}
         hitSlop={12}
+        onStartShouldSetResponder={() => !busy}
+        onResponderGrant={() => {
+          holding.current = true;
+          onPressIn();
+        }}
+        onResponderRelease={release}
+        // No le cede el toque a nadie mientras se graba
+        onResponderTerminationRequest={() => false}
+        onResponderTerminate={release}
         style={[styles.ring, recording && styles.ringRecording]}
       >
         <View style={[styles.button, recording && styles.buttonRecording, busy && styles.buttonBusy]}>
           {busy ? <ActivityIndicator color="white" /> : <Icon name="mic" size={28} color="white" />}
         </View>
-      </Pressable>
+      </View>
       <Text style={styles.hint}>{HINT[phase]}</Text>
     </View>
   );

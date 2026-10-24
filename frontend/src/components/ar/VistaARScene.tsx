@@ -16,11 +16,15 @@ import {
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { Dimensions, PixelRatio } from "react-native";
 
-import { arSession, type ArSessionState, useArSession, type Vec3 } from "@/hooks/useArSession";
+import { arSession, type ArSessionState, type HostCommand, useArSession, type Vec3 } from "@/hooks/useArSession";
 import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
 
-// El piso está al menos así de abajo del teléfono
-const MIN_FLOOR_DROP = 0.6;
+// El piso está entre MIN y MAX_FLOOR_DROP (m) bajo el teléfono, de pie o sentado. Más cerca suele ser
+// un escritorio o una silla (el personaje quedaba gigante y flotando); más lejos, un plano fantasma
+// de ARCore (quedaba enano y hundido)
+const MIN_FLOOR_DROP = 0.85;
+const MAX_FLOOR_DROP = 2.1;
+const isFloorDrop = (drop: number) => drop > MIN_FLOOR_DROP && drop < MAX_FLOOR_DROP;
 // Un plano cuenta como piso si está a esta distancia (m) del plano horizontal más bajo
 const FLOOR_TOLERANCE = 0.15;
 // Ignoramos planos diminutos, que suelen ser ruido. Bajo: los primeros planos que da ARCore son chicos
@@ -45,6 +49,9 @@ const PROBE_POINTS: [number, number][] = [
   [0.7, 0.72],
 ];
 const PROBE_INTERVAL_MS = 300;
+// Sin planos medidos los hits de respaldo varían hasta ±0,5 m entre lecturas: la altura del piso es la
+// mediana de las lecturas de este último lapso (ms), no la de una sola
+const PROBE_WINDOW_MS = 4000;
 // La mayoría de los frames no traen hit: mantenemos el último punto un rato para que el
 // anillo (y el botón) no parpadeen
 const FLOOR_HOLD_MS = 1500;
@@ -75,6 +82,19 @@ const TURN_SPEED = 120;
 const MIN_LOOK_DISTANCE = 0.3;
 // Foco y sombra van sobre el anfitrión (en el marco de la colocación) y lo acompañan al caminar
 const LIGHT_OFFSET: Vec3 = [0.6, 4, 1.2];
+// Modo "mover": metros que avanza por cada px que se desliza el dedo, por metro de distancia a la
+// cámara (así se siente igual cerca que lejos). Alejar/acercar rinde más: el piso se ve en escorzo
+const MOVE_GAIN = 1 / 500;
+const MOVE_GAIN_FORWARD = 1.6;
+// Ningún evento del dedo lo mueve más que esto (m): un salto del gesto no lo manda lejos
+const MAX_MOVE_STEP = 0.12;
+// Más cerca o más lejos que esto (m) de la cámara no se lo puede llevar
+const MIN_EDIT_DISTANCE = 0.6;
+const MAX_EDIT_DISTANCE = 5;
+// grados/s al girar hacia una orientación elegida (de frente, de lado…)
+const EDIT_TURN_SPEED = 240;
+// Al tocar el piso, preferimos los hits más confiables
+const TAP_HIT_PRIORITY = ["ExistingPlane", "DepthPoint", "EstimatedHorizontalPlane", "FeaturePoint"];
 const DEG = Math.PI / 180;
 
 ViroMaterials.createMaterials({
@@ -95,12 +115,23 @@ const RING = (() => {
 
 type HitResult = { type: string; transform: { position: number[] } };
 
-/** Pose del anfitrión sobre el piso, relativa al nodo de colocación; la mueve el bucle de seguimiento. */
-type HostPose = { placementId: number; x: number; z: number; yaw: number; turning: boolean; walking: boolean };
+/**
+ * Pose del anfitrión sobre el piso, relativa al nodo de colocación; la mueven el seguimiento y el modo
+ * "mover". `y` corrige la altura del piso donde se lo llevó tocando la pantalla (0 = el de la colocación)
+ */
+type HostPose = { placementId: number; x: number; y: number; z: number; yaw: number; turning: boolean; walking: boolean };
 
 function initialPose(placementId: number, host: SceneObject): HostPose {
   const [x, , z] = host.transform.position;
-  return { placementId, x, z, yaw: host.transform.rotation[1], turning: false, walking: false };
+  return { placementId, x, y: 0, z, yaw: host.transform.rotation[1], turning: false, walking: false };
+}
+
+/** Punto del mundo (x, z) en el marco del nodo de colocación (trasladado a `point` y girado `yaw` en Y). */
+function toPlacementFrame(placement: { point: Vec3; yaw: number }, x: number, z: number): [number, number] {
+  const t = placement.yaw * DEG;
+  const wx = x - placement.point[0];
+  const wz = z - placement.point[2];
+  return [wx * Math.cos(t) - wz * Math.sin(t), wx * Math.sin(t) + wz * Math.cos(t)];
 }
 
 /** Ángulo equivalente en (-180, 180] */
@@ -114,6 +145,9 @@ export function VistaARScene() {
   const floor = useArSession((s) => s.floor);
   const animation = useArSession((s) => s.animation);
   const objects = useArSession((s) => s.objects);
+  // Tamaño de los modelos: corrección automática de la colocación por el ajuste manual
+  const sizeScale = useArSession((s) => s.sizeScale);
+  const size = (placement?.autoScale ?? 1) * sizeScale;
   // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
   const host = objects.find((o): o is DynamicSceneObject => o.kind === "dynamic");
   const hostId = host?.id;
@@ -128,6 +162,7 @@ export function VistaARScene() {
   const aimLevel = useRef<number | null>(null);
   // Altura del piso según los hit tests de la parte baja de la pantalla
   const probeLevel = useRef<number | null>(null);
+  const probeSamples = useRef<{ y: number; at: number }[]>([]);
   const lastProbe = useRef(0);
   const probing = useRef(false);
   const scene = useRef<ViroARScene>(null);
@@ -140,6 +175,14 @@ export function VistaARScene() {
   const hostNode = useRef<ViroNode>(null);
   const spotLight = useRef<ViroSpotLight>(null);
   const shadow = useRef<ViroQuad>(null);
+  // Anillo bajo el anfitrión mientras está en modo "mover"
+  const editRing = useRef<ViroPolygon>(null);
+  const editing = useArSession((s) => s.editing);
+  // Última pose de la cámara (posición y dirección) para traducir el dedo a movimiento en el piso
+  const lastCamera = useRef<{ position: Vec3; forward: Vec3 } | null>(null);
+  // Orientación (yaw) a la que se está girando por una orden del modo "mover"
+  const targetYaw = useRef<number | null>(null);
+  const wasEditing = useRef(false);
 
   useEffect(() => () => {
     if (trackingLostTimer.current) clearTimeout(trackingLostTimer.current);
@@ -207,7 +250,7 @@ export function VistaARScene() {
   /** Altura del piso más confiable entre hits: primero planos reales, si no puntos de respaldo. */
   function levelFromHits(results: HitResult[], camera: Vec3): number | undefined {
     const usable = results.filter(({ transform: { position: [x, y, z] } }) =>
-      camera[1] - y > MIN_FLOOR_DROP &&
+      isFloorDrop(camera[1] - y) &&
       Math.hypot(x - camera[0], y - camera[1], z - camera[2]) < MAX_LEVEL_HIT_DISTANCE,
     );
     return (
@@ -236,9 +279,13 @@ export function VistaARScene() {
       .then((all: HitResult[][]) => {
         const levels = all.map((r) => levelFromHits(r ?? [], camera)).filter((l) => l !== undefined);
         if (!levels.length) return;
-        // La mediana descarta un punto suelto (una silla, un zócalo)
-        levels.sort((a, b) => a - b);
-        probeLevel.current = levels[Math.floor(levels.length / 2)];
+        // La mediana de las lecturas recientes descarta puntos sueltos (una silla, un zócalo, ruido)
+        const at = Date.now();
+        const samples = probeSamples.current.filter((p) => at - p.at < PROBE_WINDOW_MS);
+        for (const y of levels) samples.push({ y, at });
+        probeSamples.current = samples;
+        const sorted = samples.map((p) => p.y).sort((a, b) => a - b);
+        probeLevel.current = sorted[Math.floor(sorted.length / 2)];
         if (__DEV__) console.log("[AR] probe", JSON.stringify({ levels, camera }));
       })
       .finally(() => {
@@ -263,7 +310,7 @@ export function VistaARScene() {
       );
     }
     probeFloor(camera, now);
-    const belowCamera = (y: number) => camera[1] - y > MIN_FLOOR_DROP;
+    const belowCamera = (y: number) => isFloorDrop(camera[1] - y);
     const near = ([x, y, z]: number[]) =>
       Math.hypot(x - camera[0], y - camera[1], z - camera[2]) < MAX_HIT_DISTANCE;
     const hits = hitTestResults.filter((r) => near(r.transform.position));
@@ -295,32 +342,209 @@ export function VistaARScene() {
     }
   }
 
-  function applyPose({ x, z, yaw }: HostPose) {
-    hostNode.current?.setNativeProps({ position: [x, 0, z], rotation: [0, yaw, 0] });
-    shadow.current?.setNativeProps({ position: [x, 0, z] });
-    spotLight.current?.setNativeProps({ position: [x + LIGHT_OFFSET[0], LIGHT_OFFSET[1], z + LIGHT_OFFSET[2]] });
+  function applyPose({ x, y, z, yaw }: HostPose) {
+    hostNode.current?.setNativeProps({ position: [x, y, z], rotation: [0, yaw, 0] });
+    shadow.current?.setNativeProps({ position: [x, y, z] });
+    // setNativeProps está tipado con todas las props del polígono, pero acepta solo las que cambian
+    editRing.current?.setNativeProps({ position: [x, y + RETICLE_LIFT, z] } as ComponentProps<typeof ViroPolygon>);
+    spotLight.current?.setNativeProps({ position: [x + LIGHT_OFFSET[0], y + LIGHT_OFFSET[1], z + LIGHT_OFFSET[2]] });
   }
+
+  /** Pose actual del anfitrión movible (la crea en la primera consulta de cada colocación). */
+  function currentPose(): HostPose | null {
+    const { placement, tracking, objects } = arSession.get();
+    const current = objects.find((o) => o.kind === "dynamic");
+    if (!placement || !tracking || !current || current.entrance) return null;
+    if (hostPose.current?.placementId !== placement.id) hostPose.current = initialPose(placement.id, current);
+    return hostPose.current;
+  }
+
+  // Modo "mover": el dedo lo desliza por el piso en la dirección en que se lo ve (derecha/izquierda
+  // en pantalla = derecha/izquierda real; arriba = alejarlo); los botones lo orientan
+  function onHostCommand(command: HostCommand) {
+    if (command.type === "place") {
+      placeAtScreen(command.x, command.y);
+      return;
+    }
+    const { placement } = arSession.get();
+    const pose = currentPose();
+    const camera = lastCamera.current;
+    if (!placement || !pose || !camera) return;
+    const [cx, cz] = toPlacementFrame(placement, camera.position[0], camera.position[2]);
+    // Yaw con el que mira al usuario (el modelo mira hacia +Z)
+    const towardUser = Math.atan2(cx - pose.x, cz - pose.z) / DEG;
+
+    if (command.type === "rotate") {
+      targetYaw.current = null;
+      pose.yaw = wrapDegrees(pose.yaw + command.degrees);
+      applyPose(pose);
+      return;
+    }
+    if (command.type === "face") {
+      const offset =
+        command.side === "front"
+          ? 0
+          : command.side === "back"
+            ? 180
+            : // De lado: el perfil más cercano al actual; si ya está de lado, el otro
+              wrapDegrees(pose.yaw - towardUser) > 45 && wrapDegrees(pose.yaw - towardUser) < 135
+              ? -90
+              : 90;
+      targetYaw.current = wrapDegrees(towardUser + offset);
+      return;
+    }
+
+    // Ejes en el marco de colocación: adelante = hacia donde mira la cámara, sobre el piso
+    const [fx, fz] = toPlacementFrame(placement, placement.point[0] + camera.forward[0], placement.point[2] + camera.forward[2]);
+    const flen = Math.hypot(fx, fz);
+    if (flen < 1e-3) return;
+    const ax = fx / flen;
+    const az = fz / flen;
+    const distance = Math.hypot(pose.x - cx, pose.z - cz);
+    const gain = Math.min(Math.max(distance, 1), MAX_EDIT_DISTANCE) * MOVE_GAIN;
+    // Derecha de la cámara sobre el piso: el adelante girado -90° (Y hacia arriba)
+    let mx = -az * command.right * gain + ax * command.up * gain * MOVE_GAIN_FORWARD;
+    let mz = ax * command.right * gain + az * command.up * gain * MOVE_GAIN_FORWARD;
+    const step = Math.hypot(mx, mz);
+    if (step > MAX_MOVE_STEP) {
+      mx *= MAX_MOVE_STEP / step;
+      mz *= MAX_MOVE_STEP / step;
+    }
+    // No más cerca ni más lejos de la cámara que el rango permitido
+    let nx = pose.x + mx - cx;
+    let nz = pose.z + mz - cz;
+    const d = Math.hypot(nx, nz);
+    if (d < 1e-3) return;
+    const clamped = Math.min(MAX_EDIT_DISTANCE, Math.max(MIN_EDIT_DISTANCE, d));
+    nx = (nx / d) * clamped;
+    nz = (nz / d) * clamped;
+    pose.x = cx + nx;
+    pose.z = cz + nz;
+    applyPose(pose);
+  }
+
+  // Toque en modo "mover": lo lleva al punto del piso tocado. Si ahí hay un hit real del piso, también
+  // toma su altura: si la colocación quedó con el piso mal medido, así los pies quedan en el piso de
+  // verdad y el tamaño se ve bien (con el piso muy abajo quedaba lejos y se veía enano)
+  async function placeAtScreen(screenX: number, screenY: number) {
+    const ratio = PixelRatio.get();
+    let results: HitResult[] = [];
+    try {
+      // Viro espera píxeles físicos (enteros en Android)
+      results = (await scene.current?.performARHitTestWithPoint(Math.round(screenX * ratio), Math.round(screenY * ratio))) ?? [];
+    } catch (e) {
+      if (__DEV__) console.warn("[AR] hit test del toque falló", e);
+    }
+    const { placement, faceUser } = arSession.get();
+    const pose = currentPose();
+    const camera = lastCamera.current;
+    if (!placement || !pose || !camera) return;
+    const [cx, cy, cz] = camera.position;
+    // Altura del piso donde está ahora
+    const currentFloorY = placement.point[1] + pose.y;
+
+    // Un hit a una altura creíble de piso bajo el teléfono (el más confiable); si no hay, cualquier
+    // hit marca la dirección del toque y el punto es donde ese rayo corta el piso actual
+    const floorHits = results.filter(
+      (r) => isFloorDrop(cy - r.transform.position[1]) && Math.hypot(r.transform.position[0] - cx, r.transform.position[2] - cz) < MAX_LEVEL_HIT_DISTANCE,
+    );
+    const rank = (type: string) => {
+      const i = TAP_HIT_PRIORITY.findIndex((p) => type.startsWith(p));
+      return i < 0 ? TAP_HIT_PRIORITY.length : i;
+    };
+    const floorHit = floorHits.sort((a, b) => rank(a.type) - rank(b.type))[0];
+    let target: Vec3 | null = null;
+    if (floorHit) {
+      target = floorHit.transform.position as Vec3;
+    } else {
+      for (const r of results) {
+        const [hx, hy, hz] = r.transform.position;
+        const dy = hy - cy;
+        if (dy > -1e-3) continue;
+        const t = (currentFloorY - cy) / dy;
+        if (t > 0) {
+          target = [cx + (hx - cx) * t, currentFloorY, cz + (hz - cz) * t];
+          break;
+        }
+      }
+    }
+    if (__DEV__) console.log("[AR] mover a", JSON.stringify({ target, hits: results.map((r) => [r.type, r.transform.position]) }));
+    if (!target) {
+      arSession.set({ moveNotice: "No encontré el piso ahí: apunta un poco más abajo y vuelve a tocar" });
+      return;
+    }
+
+    // Dentro del rango permitido desde la cámara
+    let dx = target[0] - cx;
+    let dz = target[2] - cz;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-3) return;
+    const clamped = Math.min(MAX_EDIT_DISTANCE, Math.max(MIN_EDIT_DISTANCE, d));
+    dx = (dx / d) * clamped;
+    dz = (dz / d) * clamped;
+    [pose.x, pose.z] = toPlacementFrame(placement, cx + dx, cz + dz);
+    pose.y = target[1] - placement.point[1];
+    applyPose(pose);
+    arSession.set({ moveNotice: clamped < d ? "Lo dejé lo más lejos posible en esa dirección" : null });
+    // Si nadie lo orientó a mano, queda mirando al usuario desde su nuevo lugar
+    if (faceUser) {
+      const [ux, uz] = toPlacementFrame(placement, cx, cz);
+      targetYaw.current = Math.atan2(ux - pose.x, uz - pose.z) / DEG;
+    }
+  }
+
+  function onHostTap() {
+    // En modo "mover" los toques son para ubicarlo, no para que salude
+    if (!arSession.get().editing) arSession.wave();
+  }
+
+  // Las órdenes del modo "mover" llegan desde la UI
+  useEffect(() => {
+    arSession.onHostControl(onHostCommand);
+    return () => arSession.onHostControl(null);
+  });
 
   // Cada frame: el anfitrión se gira para mirar al usuario y, si el modo seguir está activo, camina
   // hacia él cuando se aleja. La pose va directo al nodo nativo (setNativeProps) para no
   // re-renderizar React en cada frame
-  function onCameraTransformUpdate({ position }: ViroCameraTransform) {
+  function onCameraTransformUpdate({ position, forward }: ViroCameraTransform) {
     const now = Date.now();
     const dt = Math.min(0.1, (now - lastFrameAt.current) / 1000);
     lastFrameAt.current = now;
-    const { placement, tracking, follow, objects } = arSession.get();
-    const current = objects.find((o) => o.kind === "dynamic");
+    const { placement, follow, faceUser, editing } = arSession.get();
+    lastCamera.current = { position: position as Vec3, forward: forward as Vec3 };
     // Sin rastreo la pose de la cámara no es confiable
-    if (!placement || !tracking || !current || current.entrance) return;
-    if (hostPose.current?.placementId !== placement.id) hostPose.current = initialPose(placement.id, current);
-    const pose = hostPose.current;
+    const pose = currentPose();
+    if (!placement || !pose) return;
 
-    // Cámara en el marco del nodo de colocación (trasladado a `point` y girado `yaw` en Y)
-    const t = placement.yaw * DEG;
-    const wx = position[0] - placement.point[0];
-    const wz = position[2] - placement.point[2];
-    const dx = wx * Math.cos(t) - wz * Math.sin(t) - pose.x;
-    const dz = wx * Math.sin(t) + wz * Math.cos(t) - pose.z;
+    // En modo "mover" no camina ni se gira solo: solo termina de girar hacia la orientación elegida
+    if (editing) {
+      if (pose.walking) {
+        pose.walking = false;
+        arSession.walk(false);
+      }
+      pose.turning = false;
+      wasEditing.current = true;
+      if (targetYaw.current !== null) {
+        const diff = wrapDegrees(targetYaw.current - pose.yaw);
+        const turn = Math.sign(diff) * Math.min(Math.abs(diff), EDIT_TURN_SPEED * dt);
+        pose.yaw = wrapDegrees(pose.yaw + turn);
+        if (Math.abs(diff - turn) < 0.5) targetYaw.current = null;
+        applyPose(pose);
+      }
+      return;
+    }
+    targetYaw.current = null;
+    // Al salir del modo "mover" las props toman la pose elegida, para que un render no lo devuelva
+    if (wasEditing.current) {
+      wasEditing.current = false;
+      setSettledPose({ ...pose });
+    }
+
+    // Cámara en el marco del nodo de colocación
+    const [cx, cz] = toPlacementFrame(placement, position[0], position[2]);
+    const dx = cx - pose.x;
+    const dz = cz - pose.z;
     const distance = Math.hypot(dx, dz);
     if (distance < MIN_LOOK_DISTANCE) return;
 
@@ -341,8 +565,10 @@ export function VistaARScene() {
     }
 
     // El modelo mira hacia +Z: yaw = atan2(dx, dz). Caminando siempre se orienta hacia donde avanza
+    // Si lo orientaron a mano se queda mirando hacia donde lo dejaron
     const diff = wrapDegrees(Math.atan2(dx, dz) / DEG - pose.yaw);
-    if (Math.abs(diff) > TURN_START) pose.turning = true;
+    if (!faceUser) pose.turning = false;
+    else if (Math.abs(diff) > TURN_START) pose.turning = true;
     else if (Math.abs(diff) < TURN_STOP) pose.turning = false;
     if (pose.turning || walking) {
       const turn = Math.sign(diff) * Math.min(Math.abs(diff), TURN_SPEED * dt);
@@ -362,7 +588,7 @@ export function VistaARScene() {
         ? settledPose
         : initialPose(placement.id, movableHost)
       : null;
-  const shadowAt: Vec3 = pose ? [pose.x, 0, pose.z] : [0, 0, 0];
+  const shadowAt: Vec3 = pose ? [pose.x, pose.y, pose.z] : [0, 0, 0];
 
   return (
     <ViroARScene
@@ -401,7 +627,7 @@ export function VistaARScene() {
         >
           <ViroSpotLight
             ref={spotLight}
-            position={[shadowAt[0] + LIGHT_OFFSET[0], LIGHT_OFFSET[1], shadowAt[2] + LIGHT_OFFSET[2]]}
+            position={[shadowAt[0] + LIGHT_OFFSET[0], shadowAt[1] + LIGHT_OFFSET[1], shadowAt[2] + LIGHT_OFFSET[2]]}
             direction={[-0.15, -1, -0.3]}
             innerAngle={10}
             outerAngle={30}
@@ -416,13 +642,31 @@ export function VistaARScene() {
           />
           {objects.map((obj) =>
             pose && movableHost && obj.id === movableHost.id ? (
-              // El nodo lleva la pose que mueve el seguimiento; el modelo queda en su origen
-              <ViroNode key={obj.id} ref={hostNode} position={[pose.x, 0, pose.z]} rotation={[0, pose.yaw, 0]}>
-                <SceneModel obj={atOrigin(movableHost)} isHost hostAnimation={animation} />
+              // El nodo lleva la pose que mueven el seguimiento y el modo "mover"; el modelo queda en su origen
+              <ViroNode key={obj.id} ref={hostNode} position={[pose.x, pose.y, pose.z]} rotation={[0, pose.yaw, 0]}>
+                <SceneModel obj={atOrigin(movableHost)} isHost hostAnimation={animation} onTap={onHostTap} size={size} />
               </ViroNode>
             ) : (
-              <SceneModel key={obj.id} obj={obj} isHost={obj.id === hostId} hostAnimation={animation} />
+              <SceneModel
+                key={obj.id}
+                obj={obj}
+                isHost={obj.id === hostId}
+                hostAnimation={animation}
+                onTap={onHostTap}
+                size={size}
+              />
             ),
+          )}
+          {editing && pose && (
+            <ViroPolygon
+              ref={editRing}
+              position={[pose.x, pose.y + RETICLE_LIFT, pose.z]}
+              rotation={[-90, 0, 0]}
+              vertices={RING.outer}
+              holes={RING.holes}
+              materials={["reticle"]}
+              ignoreEventHandling
+            />
           )}
           {/* Sombra sobre el piso real para que el personaje no se vea flotando */}
           <ViroQuad ref={shadow} position={shadowAt} rotation={[-90, 0, 0]} width={3} height={3} arShadowReceiver />
@@ -436,9 +680,13 @@ type SceneModelProps = {
   obj: SceneObject;
   isHost: boolean;
   hostAnimation: ArSessionState["animation"];
+  /** Toque sobre el anfitrión: saluda */
+  onTap: () => void;
+  /** Factor de tamaño sobre la escala del modelo */
+  size: number;
 };
 
-function SceneModel({ obj, isHost, hostAnimation }: SceneModelProps) {
+function SceneModel({ obj, isHost, hostAnimation, onTap, size }: SceneModelProps) {
   const entrance = obj.kind === "dynamic" ? obj.entrance : undefined;
   const [loaded, setLoaded] = useState(false);
   const model = useRef<Viro3DObject>(null);
@@ -480,9 +728,9 @@ function SceneModel({ obj, isHost, hostAnimation }: SceneModelProps) {
         type="GLB"
         position={[0, y, 0]}
         rotation={obj.transform.rotation}
-        scale={obj.transform.scale}
+        scale={[obj.transform.scale[0] * size, obj.transform.scale[1] * size, obj.transform.scale[2] * size]}
         animation={modelAnimation}
-        onClick={isHost ? () => arSession.wave() : undefined}
+        onClick={isHost ? onTap : undefined}
         onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
         onLoadEnd={() => {
           if (__DEV__) console.log("[AR] modelo cargado", obj.id);
