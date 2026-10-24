@@ -43,6 +43,7 @@ export function SimulationsSheet({ visible, siteName, simulations, currentId, on
                 <Text style={styles.num}>0{i + 1}</Text>
                 <View style={styles.info}>
                   <Text style={[styles.rowTitle, isCurrent && { color: "#c76035" }]}>{item.title}</Text>
+                  {item.space === "open" && <Text style={styles.badge}>ESPACIO ABIERTO · ~20 M</Text>}
                   <Text style={styles.rowDetail}>{item.description}</Text>
                 </View>
                 <Icon name="chevron" />
@@ -86,5 +87,17 @@ const styles = StyleSheet.create({
   num: { width: 40, fontFamily: fonts.displayBold, fontSize: 12, color: "#999e9a" },
   info: { flex: 1, gap: 3 },
   rowTitle: { fontFamily: fonts.bold, fontSize: 15, color: colors.ink },
+  badge: {
+    alignSelf: "flex-start",
+    color: "#a35f3d",
+    backgroundColor: "#f1e3d6",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    fontSize: 9,
+    letterSpacing: 0.8,
+    fontFamily: fonts.bold,
+    overflow: "hidden",
+  },
   rowDetail: { color: "#7a817d", fontSize: 11, fontFamily: fonts.regular },
 });

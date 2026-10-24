@@ -1,0 +1,451 @@
+{
+  "animation": "trincheras",
+  "layout": "field",
+  "durationMs": 30000,
+  "slots": [
+    {
+      "id": "patriota_a",
+      "side": "patriota",
+      "variant": "a",
+      "position": [
+        -8.9,
+        0,
+        -1.8
+      ],
+      "yaw": 90
+    },
+    {
+      "id": "patriota_b",
+      "side": "patriota",
+      "variant": "b",
+      "position": [
+        -8.9,
+        0,
+        -0.6
+      ],
+      "yaw": 90
+    },
+    {
+      "id": "patriota_c",
+      "side": "patriota",
+      "variant": "c",
+      "position": [
+        -8.9,
+        0,
+        0.6
+      ],
+      "yaw": 90
+    },
+    {
+      "id": "patriota_d",
+      "side": "patriota",
+      "variant": "d",
+      "position": [
+        -8.9,
+        0,
+        1.8
+      ],
+      "yaw": 90
+    },
+    {
+      "id": "realista_a",
+      "side": "realista",
+      "variant": "a",
+      "position": [
+        8.9,
+        0,
+        -1.8
+      ],
+      "yaw": -90
+    },
+    {
+      "id": "realista_b",
+      "side": "realista",
+      "variant": "b",
+      "position": [
+        8.9,
+        0,
+        -0.6
+      ],
+      "yaw": -90
+    },
+    {
+      "id": "realista_c",
+      "side": "realista",
+      "variant": "c",
+      "position": [
+        8.9,
+        0,
+        0.6
+      ],
+      "yaw": -90
+    },
+    {
+      "id": "realista_d",
+      "side": "realista",
+      "variant": "d",
+      "position": [
+        8.9,
+        0,
+        1.8
+      ],
+      "yaw": -90
+    }
+  ],
+  "parapets": [
+    {
+      "id": "parapeto_patriota",
+      "position": [
+        -7.6,
+        0,
+        0
+      ],
+      "yaw": 0
+    },
+    {
+      "id": "parapeto_realista",
+      "position": [
+        7.6,
+        0,
+        0
+      ],
+      "yaw": 180
+    }
+  ],
+  "cues": [
+    {
+      "atMs": 3000,
+      "sound": "disparo",
+      "at": [
+        7.47,
+        1.72,
+        -1.7
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 3180,
+      "sound": "disparo_2",
+      "at": [
+        7.46,
+        1.71,
+        -0.48
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 3420,
+      "sound": "disparo",
+      "at": [
+        7.46,
+        1.71,
+        0.54
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 3650,
+      "sound": "disparo_2",
+      "at": [
+        7.47,
+        1.71,
+        1.97
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 6000,
+      "sound": "disparo",
+      "at": [
+        -7.47,
+        1.72,
+        -1.75
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 6180,
+      "sound": "disparo_2",
+      "at": [
+        -7.46,
+        1.71,
+        -0.55
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 6420,
+      "sound": "disparo",
+      "at": [
+        -7.46,
+        1.71,
+        0.65
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 6650,
+      "sound": "disparo_2",
+      "at": [
+        -7.46,
+        1.71,
+        1.85
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 9000,
+      "sound": "disparo_2",
+      "at": [
+        7.9,
+        1.72,
+        -0.77
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 9180,
+      "sound": "disparo",
+      "at": [
+        7.92,
+        1.71,
+        0.46
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 9420,
+      "sound": "disparo_2",
+      "at": [
+        7.46,
+        1.71,
+        0.54
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 9650,
+      "sound": "disparo",
+      "at": [
+        7.99,
+        1.71,
+        2.92
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 12000,
+      "sound": "disparo_2",
+      "at": [
+        -7.47,
+        1.72,
+        -1.75
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 12180,
+      "sound": "disparo",
+      "at": [
+        -7.46,
+        1.71,
+        -0.55
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 12420,
+      "sound": "disparo_2",
+      "at": [
+        -7.46,
+        1.71,
+        0.65
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 12650,
+      "sound": "disparo",
+      "at": [
+        -7.46,
+        1.71,
+        1.85
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 12900,
+      "sound": "cry",
+      "at": [
+        8.9,
+        1.5,
+        0.6
+      ]
+    },
+    {
+      "atMs": 14000,
+      "sound": "fall",
+      "at": [
+        9.7,
+        0.3,
+        0.6
+      ]
+    },
+    {
+      "atMs": 15000,
+      "sound": "disparo",
+      "at": [
+        9.27,
+        1.72,
+        -0.41
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 15180,
+      "sound": "disparo_2",
+      "at": [
+        9.31,
+        1.71,
+        0.78
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 15650,
+      "sound": "disparo_2",
+      "at": [
+        9.39,
+        1.71,
+        3.15
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 15800,
+      "sound": "cry",
+      "at": [
+        -8.9,
+        1.5,
+        -0.6
+      ]
+    },
+    {
+      "atMs": 16900,
+      "sound": "fall",
+      "at": [
+        -9.7,
+        0.3,
+        -0.6
+      ]
+    },
+    {
+      "atMs": 18000,
+      "sound": "disparo",
+      "at": [
+        -7.47,
+        1.72,
+        -1.75
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 18420,
+      "sound": "disparo",
+      "at": [
+        -7.46,
+        1.71,
+        0.65
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 18650,
+      "sound": "disparo_2",
+      "at": [
+        -7.46,
+        1.71,
+        1.85
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 21000,
+      "sound": "disparo_2",
+      "at": [
+        10.23,
+        1.72,
+        -1.25
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 21180,
+      "sound": "disparo",
+      "at": [
+        10.24,
+        1.71,
+        -0.06
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 21650,
+      "sound": "disparo",
+      "at": [
+        10.26,
+        1.71,
+        2.29
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 24000,
+      "sound": "disparo_2",
+      "at": [
+        -7.47,
+        1.72,
+        -1.75
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 24420,
+      "sound": "disparo_2",
+      "at": [
+        -7.46,
+        1.71,
+        0.65
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 24650,
+      "sound": "disparo",
+      "at": [
+        -7.46,
+        1.71,
+        1.85
+      ],
+      "effect": "humo"
+    },
+    {
+      "atMs": 26700,
+      "sound": "run_away",
+      "at": [
+        8.9,
+        1.0,
+        -1.8
+      ]
+    },
+    {
+      "atMs": 27000,
+      "sound": "cry",
+      "at": [
+        -8.9,
+        1.6,
+        -1.8
+      ]
+    }
+  ]
+}

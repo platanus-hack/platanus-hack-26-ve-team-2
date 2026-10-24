@@ -7,6 +7,8 @@ export interface SimulationSummary {
   description: string;
   /** general = conversación con el presentador (Bolívar) con la que se entra; scene = escena histórica */
   kind: "general" | "scene";
+  /** open = la escena ocupa un campo de ~20 m y necesita un espacio abierto; compact = cabe en cualquier lado */
+  space: "compact" | "open";
 }
 
 /** Área cerrada del mapa donde se pueden iniciar simulaciones. */

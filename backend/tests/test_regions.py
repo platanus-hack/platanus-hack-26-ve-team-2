@@ -18,10 +18,11 @@ def test_list_regions_returns_cubo_negro_as_geojson():
     center = region["center"]
     assert polygon.contains(Point(center["lng"], center["lat"]))
     # Primero la conversación general con el presentador; después las escenas
-    assert [(s["id"], s["kind"]) for s in region["simulations"]] == [
-        ("bolivar_general", "general"),
-        ("carabobo_prueba", "scene"),
-        ("batalla", "scene"),
+    assert [(s["id"], s["kind"], s["space"]) for s in region["simulations"]] == [
+        ("bolivar_general", "general", "compact"),
+        ("carabobo_prueba", "scene", "compact"),
+        ("batalla", "scene", "compact"),
+        ("trincheras", "scene", "open"),
     ]
     assert "prompt" not in region["simulations"][0]  # el prompt es contexto del servidor
 

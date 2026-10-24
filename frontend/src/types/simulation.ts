@@ -30,6 +30,8 @@ export interface DynamicSceneObject extends BaseSceneObject {
   characterId?: string;
   /** Si llega caminando: sale de `from` y avanza en línea recta hasta `transform.position` */
   entrance?: Entrance;
+  /** Variante de la coreografía que reproduce este personaje (en el campo cada soldado tiene la suya) */
+  choreographyAnimation?: string;
 }
 
 export interface Entrance {
@@ -46,6 +48,10 @@ export type SceneObject = StaticSceneObject | DynamicSceneObject;
 export interface SoundCue {
   atMs: number;
   sound: string;
+  /** Solo en el campo: de dónde sale el sonido (marco del campo); suena espacial, desde ese punto */
+  at?: Vec3;
+  /** Soplo de humo en `at` (el disparo de un fusil) */
+  effect?: "humo";
 }
 
 /**
@@ -54,6 +60,13 @@ export interface SoundCue {
  */
 export interface Choreography {
   animation: string;
+  /**
+   * "stage" (por defecto): todos en el origen del anfitrión y la animación decide dónde va cada uno.
+   * "field": escena de campo abierto con su propio marco, frente al usuario; los objetos (salvo el
+   * anfitrión, que se queda con el usuario) van en su posición real y cada uno reproduce su
+   * `choreographyAnimation`
+   */
+  layout?: "stage" | "field";
   durationMs: number;
   cues: SoundCue[];
   /** Assets de cada sonido que nombran los cues (y el del final) */

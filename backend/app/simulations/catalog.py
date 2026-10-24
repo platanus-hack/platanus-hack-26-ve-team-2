@@ -19,6 +19,15 @@ República y gobierna Venezuela para el rey. Bolívar lo vence en Los Taguanes, 
 jefes se encuentran cara a cara antes del combate.
 """
 
+TRINCHERAS_PROMPT = """\
+Es el 12 de febrero de 1814, en La Victoria. José Félix Ribas defiende el pueblo con una tropa
+improvisada, en buena parte estudiantes y seminaristas de Caracas, contra las fuerzas realistas de
+José Tomás Boves al mando de Francisco Tomás Morales. Los dos bandos se tirotean durante horas
+desde parapetos y barricadas; al caer la tarde llega Vicente Campo Elías con refuerzos y los
+realistas se retiran. Bolívar no estuvo en la batalla: la conoce por Ribas y la cuenta con orgullo.
+En la escena el visitante está entre las dos trincheras, una a cada lado.
+"""
+
 
 def presenter_prompt(scenes: tuple[Simulation, ...]) -> str:
     """Contexto de la conversación general: Bolívar recibe al visitante y le ofrece las escenas."""
@@ -52,6 +61,15 @@ CUBO_NEGRO_SCENES = (
         prompt=BATALLA_PROMPT,
         voice_location_id="campana_admirable",
         character_id="bolivar",
+    ),
+    Simulation(
+        id="trincheras",
+        title="Las trincheras de La Victoria",
+        description="Patriotas y realistas se disparan desde sus parapetos. Necesitas un espacio abierto.",
+        prompt=TRINCHERAS_PROMPT,
+        voice_location_id="la_victoria",
+        character_id="bolivar",
+        space="open",
     ),
 )
 

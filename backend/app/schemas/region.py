@@ -19,10 +19,15 @@ class SimulationSummaryOut(BaseModel):
     kind: Literal["general", "scene"] = Field(
         description="general = conversación con el presentador; scene = escena histórica"
     )
+    space: Literal["compact", "open"] = Field(
+        description="open = la escena necesita un espacio abierto de ~20 m; compact = cabe en cualquier lado"
+    )
 
     @classmethod
     def from_domain(cls, sim: Simulation) -> "SimulationSummaryOut":
-        return cls(id=sim.id, title=sim.title, description=sim.description, kind=sim.kind)
+        return cls(
+            id=sim.id, title=sim.title, description=sim.description, kind=sim.kind, space=sim.space
+        )
 
 
 class RegionOut(BaseModel):

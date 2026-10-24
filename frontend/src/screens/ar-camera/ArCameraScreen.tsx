@@ -122,11 +122,13 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const faceUser = useArSession((s) => s.faceUser);
   const editing = useArSession((s) => s.editing);
   const moveNotice = useArSession((s) => s.moveNotice);
+  // Coreografía de campo abierto (las trincheras): se arma frente al usuario y el anfitrión sigue libre
+  const fieldScene = useArSession((s) => s.choreography?.layout === "field");
   // El anfitrión que llega caminando ya tiene su lugar definido: ese no se puede mover. En la batalla
   // tampoco: la coreografía decide dónde está cada uno
   const movableHost = useArSession((s) => {
     const host = s.objects.find((o) => o.kind === "dynamic");
-    return !!host && host.kind === "dynamic" && !host.entrance && s.battle === "off";
+    return !!host && host.kind === "dynamic" && !host.entrance && (s.battle === "off" || s.choreography?.layout === "field");
   });
   const battle = useArSession((s) => s.battle);
   // Efectos de sonido y final de la coreografía (la batalla), si la simulación tiene
@@ -156,9 +158,10 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   }, [active.objects, active.choreography]);
 
   // Los personajes de las otras simulaciones de la región se cargan ocultos desde ya: al cambiar de
-  // simulación aparecen al instante
+  // simulación aparecen al instante. Los de campo abierto no: son muchos soldados y se cargan al elegirla
   useEffect(() => {
-    arSession.setPreload(region.simulations.flatMap((s) => getSimulationObjects(s.id) ?? []));
+    const preloadable = region.simulations.filter((s) => getSimulationChoreography(s.id)?.layout !== "field");
+    arSession.setPreload(preloadable.flatMap((s) => getSimulationObjects(s.id) ?? []));
   }, [region, active.objects]);
 
   // Simulación pedida más recientemente: una respuesta vieja de la API no la pisa
@@ -204,7 +207,10 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     if (hasFloor)
       return {
         title: `Simulación alineada · a ${String(floorDistance).replace(".", ",")} m`,
-        subtitle: "Inclina el teléfono para acercarla o alejarla y toca para comenzar",
+        subtitle:
+          current?.space === "open"
+            ? "Necesitas un espacio abierto de unos 20 m: la escena se arma frente a ti"
+            : "Inclina el teléfono para acercarla o alejarla y toca para comenzar",
       };
     if (!floorFound)
       return { title: "Escaneando el piso…", subtitle: "Apunta al piso y mueve el teléfono de lado a lado" };
@@ -227,12 +233,20 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     if (modelStatus !== "ready") return "Cargando el personaje…";
     // Al pasar el teléfono a otra persona ARCore puede perder el rastreo un momento
     if (!tracking) return "Recuperando el rastreo, mueve el teléfono despacio";
+    if (fieldScene) {
+      if (battle === "waiting") return "Párate en un espacio abierto y mira al frente: un bando quedará a cada lado";
+      if (battle === "playing") return "¡Fuego cruzado! Mira a ambos lados";
+      if (battle === "finished") return "¡Los realistas se retiran! La Victoria resiste";
+      return null;
+    }
     if (battle === "waiting") return "Preparando la batalla…";
     if (battle === "playing") return "¡Monteverde ataca! Mira la batalla";
     if (battle === "finished") return "¡Fin de la batalla!";
     return null;
   })();
-  const inBattle = battle !== "off";
+  // En el campo se puede seguir conversando con el anfitrión mientras corre la escena; al terminar,
+  // como en la batalla, se ofrece repetirla
+  const inBattle = fieldScene ? battle === "finished" : battle !== "off";
 
   return (
     <View style={styles.container}>
@@ -371,7 +385,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
                 {battle === "finished" ? (
                   <PrimaryButton onPress={() => arSession.replayBattle()} style={styles.replay}>
                     <Icon name="replay" color="white" />
-                    <PrimaryLabel>Repetir batalla</PrimaryLabel>
+                    <PrimaryLabel>{fieldScene ? "Repetir escena" : "Repetir batalla"}</PrimaryLabel>
                   </PrimaryButton>
                 ) : (
                   <View />

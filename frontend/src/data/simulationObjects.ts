@@ -1,8 +1,12 @@
 import bolivarModel from "@/assets/models/bolivar-batalla.glb";
 import monteverdeModel from "@/assets/models/monteverde-batalla.glb";
+import parapetModel from "@/assets/models/parapeto.glb";
+import patriotModel from "@/assets/models/soldado-patriota.glb";
+import royalistModel from "@/assets/models/soldado-realista.glb";
 import type { Choreography, DynamicSceneObject, SceneObject } from "@/types/simulation";
 
 import { battleChoreography } from "./battle";
+import { TRENCH_PARAPETS, TRENCH_SLOTS, trenchesChoreography } from "./trenches";
 
 /**
  * Objetos 3D de cada simulación, guardados en el teléfono e indexados por el
@@ -30,6 +34,36 @@ const bolivar: DynamicSceneObject = {
   transform: { position: [0, 0.01, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
 };
 
+/**
+ * Trincheras: escena de campo abierto (layout "field"), en su propio marco frente al usuario. Los
+ * puestos y los parapetos salen de trenches.json. Los soldado-*.glb y parapeto.glb los genera
+ * scripts/trenches/build_trenches.py desde los modelos de Meshy (*-meshy.glb): cada soldado trae el
+ * fusil y las 4 variantes de la animación ("trincheras_a"…"d"), una por puesto de su bando
+ */
+const SOLDIER_MODELS = { patriota: patriotModel, realista: royalistModel };
+
+const trenches: SceneObject[] = [
+  ...TRENCH_PARAPETS.map(
+    (parapet): SceneObject => ({
+      id: parapet.id,
+      name: "Parapeto",
+      kind: "static",
+      model: parapetModel,
+      transform: { position: parapet.position, rotation: [0, parapet.yaw, 0], scale: [1, 1, 1] },
+    }),
+  ),
+  ...TRENCH_SLOTS.map(
+    (slot): SceneObject => ({
+      id: slot.id,
+      name: slot.side === "patriota" ? "Soldado patriota" : "Soldado realista",
+      kind: "dynamic",
+      model: SOLDIER_MODELS[slot.side],
+      choreographyAnimation: `${trenchesChoreography.animation}_${slot.variant}`,
+      transform: { position: [slot.position[0], 0.01, slot.position[2]], rotation: [0, slot.yaw, 0], scale: [1, 1, 1] },
+    }),
+  ),
+];
+
 const SIMULATION_OBJECTS: Record<string, SceneObject[]> = {
   // Conversación general: Bolívar como presentador. Es el mismo anfitrión que en las escenas, así
   // que al elegir una escena se queda donde está
@@ -47,10 +81,13 @@ const SIMULATION_OBJECTS: Record<string, SceneObject[]> = {
       transform: { position: [0, 0.01, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     },
   ],
+  // Bolívar se queda con el usuario y narra; el campo se arma alrededor
+  trincheras: [bolivar, ...trenches],
 };
 
 const SIMULATION_CHOREOGRAPHY: Record<string, Choreography> = {
   batalla: battleChoreography,
+  trincheras: trenchesChoreography,
 };
 
 export function getSimulationObjects(simulationId: string): SceneObject[] | undefined {

@@ -7,7 +7,8 @@ import type { Choreography } from "@/types/simulation";
 /**
  * Dirige la coreografía en curso: mientras corre la animación dispara cada efecto de sonido en su
  * momento y, al cumplirse la duración, la da por terminada (caen los globos con su sonido).
- * Los tiempos salen del mismo script de Blender que hornea las animaciones.
+ * Los tiempos salen del mismo script de Blender que hornea las animaciones. Los efectos con posición
+ * (los disparos del campo) los toca la escena como sonido espacial, desde el punto donde ocurren.
  */
 export function useBattleDirector(choreography: Choreography | undefined) {
   const battle = useArSession((s) => s.battle);
@@ -16,8 +17,12 @@ export function useBattleDirector(choreography: Choreography | undefined) {
   // Un reproductor por efecto, cargados de antemano para que suenen sin demora
   useEffect(() => {
     if (!choreography) return;
+    // Los que solo suenan con posición no necesitan reproductor: los toca la escena
+    const flat = new Set([...choreography.cues.filter((c) => !c.at).map((c) => c.sound), choreography.finale?.sound]);
     const created = Object.fromEntries(
-      Object.entries(choreography.sounds).map(([name, source]) => [name, createAudioPlayer(source)]),
+      Object.entries(choreography.sounds)
+        .filter(([name]) => flat.has(name))
+        .map(([name, source]) => [name, createAudioPlayer(source)]),
     );
     players.current = created;
     return () => {
@@ -30,7 +35,9 @@ export function useBattleDirector(choreography: Choreography | undefined) {
     if (!choreography || battle !== "playing") return;
     // Que suene aunque el iPhone esté en silencio, y por el altavoz (no por el auricular de llamadas)
     setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false }).catch(() => {});
-    const timers = choreography.cues.map(({ atMs, sound }) => setTimeout(() => playSound(players.current, sound), atMs));
+    const timers = choreography.cues.map(({ atMs, sound, at, effect }) =>
+      setTimeout(() => (at ? arSession.fire({ sound, at, effect }) : playSound(players.current, sound)), atMs),
+    );
     timers.push(setTimeout(() => arSession.finishBattle(), choreography.durationMs));
     const current = players.current;
     return () => {

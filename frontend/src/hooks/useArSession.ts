@@ -48,6 +48,13 @@ export type ArSessionState = {
    * animación y "finished" al terminar (caen los globos). "off" en simulaciones sin coreografía
    */
   battle: "off" | "waiting" | "playing" | "finished";
+  /**
+   * Coreografía de campo abierto (layout "field"): dónde quedó el marco del campo, en el marco de la
+   * colocación. Se fija frente al usuario al empezar; null hasta entonces
+   */
+  field: { x: number; z: number; yaw: number } | null;
+  /** Disparos (y otros sonidos con posición) que están sonando en el campo: la escena los dibuja */
+  firing: FieldShot[];
   /** Si el anfitrión camina detrás del usuario cuando se aleja (si no, solo se gira para mirarlo) */
   follow: boolean;
   /** Si el anfitrión se gira solo para mirar al usuario; al orientarlo a mano se queda mirando hacia donde lo dejaron */
@@ -62,6 +69,12 @@ export type ArSessionState = {
   modelStatus: "idle" | "loading" | "ready" | "error";
 };
 
+/** Un cue con posición de la coreografía de campo, mientras suena */
+export type FieldShot = { id: number; sound: string; at: Vec3; effect?: "humo" };
+
+// Lo que dura montado un disparo: el sonido y el humo terminan antes
+const SHOT_MS = 3000;
+
 const initialState: ArSessionState = {
   objects: [],
   preload: [],
@@ -73,6 +86,8 @@ const initialState: ArSessionState = {
   animation: { name: "saludo", run: false, loop: false },
   choreography: null,
   battle: "off",
+  field: null,
+  firing: [],
   follow: false,
   faceUser: true,
   editing: false,
@@ -83,6 +98,17 @@ const initialState: ArSessionState = {
 };
 
 let state = initialState;
+let shotId = 0;
+
+const isField = (choreography: Choreography | null) => choreography?.layout === "field";
+
+/**
+ * Si la coreografía maneja al anfitrión (la batalla en escenario). En el campo no: el anfitrión se
+ * queda con el usuario, conversa y lo puede seguir mientras la escena corre alrededor
+ */
+function hostInChoreography(): boolean {
+  return state.battle !== "off" && !isField(state.choreography);
+}
 const listeners = new Set<() => void>();
 // Modelos ya cargados en la colocación actual: la coreografía arranca cuando están todos
 const loadedModels = new Set<string>();
@@ -139,27 +165,33 @@ export const arSession = {
     const prevHost = host(state.objects);
     const nextHost = host(objects);
     if (state.placement && prevHost && nextHost?.id === prevHost.id && nextHost.model === prevHost.model) {
-      const wasBattle = state.battle !== "off";
+      const wasBattle = hostInChoreography();
       // Los personajes que salen de la escena pasan a precargados (ocultos pero cargados) en el mismo
-      // cambio: si quedaran un render fuera, Viro los desmontaría y habría que volver a cargarlos
+      // cambio: si quedaran un render fuera, Viro los desmontaría y habría que volver a cargarlos. Los
+      // soldados del campo no: son muchos y pesados, se descargan
       const active = new Set(objects.map((o) => o.id));
-      const preload = [...state.preload, ...state.objects.filter((o) => o.kind === "dynamic")].filter(
+      const leaving = isField(state.choreography) ? [] : state.objects.filter((o) => o.kind === "dynamic");
+      const preload = [...state.preload, ...leaving].filter(
         (o, i, all) => !active.has(o.id) && all.findIndex((x) => x.id === o.id) === i,
       );
       const mounted = new Set([...objects, ...preload].map((o) => o.id));
       for (const id of loadedModels) if (!mounted.has(id)) loadedModels.delete(id);
-      // En la batalla no hay modo "mover": la coreografía decide dónde está cada uno
+      // En la batalla no hay modo "mover": la coreografía decide dónde está cada uno. En el campo sí:
+      // el anfitrión sigue con el usuario
+      const hostFree = !choreography || isField(choreography);
       set({
         objects,
         preload,
         choreography,
         battle,
+        field: null,
+        firing: [],
         walking: false,
-        follow: choreography ? false : state.follow,
-        editing: choreography ? false : state.editing,
+        follow: hostFree ? state.follow : false,
+        editing: hostFree ? state.editing : false,
       });
       // Vuelve de la batalla: el anfitrión reaparece saludando
-      if (wasBattle && !choreography) arSession.wave();
+      if (wasBattle && !hostInChoreography()) arSession.wave();
       else arSession.startIfReady();
       return;
     }
@@ -169,6 +201,8 @@ export const arSession = {
       preload: [],
       choreography,
       battle,
+      field: null,
+      firing: [],
       floor: null,
       placement: null,
       faceUser: true,
@@ -197,14 +231,21 @@ export const arSession = {
   },
   /** Arranca la coreografía si está esperando y ya cargaron todos sus personajes */
   startIfReady() {
-    const { battle, placement, objects } = state;
+    const { battle, placement, objects, choreography, field } = state;
     if (battle !== "waiting" || !placement) return;
+    // El campo se arma cuando la escena sabe dónde está el usuario
+    if (isField(choreography) && !field) return;
     if (!objects.every((o) => o.kind !== "dynamic" || loadedModels.has(o.id))) return;
     arSession.playBattle();
   },
   playBattle() {
     const { choreography } = state;
     if (!choreography) return;
+    // En el campo el anfitrión no actúa en la escena: los soldados arrancan por `battle`
+    if (isField(choreography)) {
+      set({ battle: "playing", firing: [] });
+      return;
+    }
     // Todos los personajes arrancan en el mismo render: el anfitrión por `animation`, el resto por `battle`
     set({ battle: "playing", animation: { name: choreography.animation, run: true, loop: false } });
   },
@@ -215,8 +256,24 @@ export const arSession = {
   replayBattle() {
     const { choreography } = state;
     if (!choreography) return;
-    set({ battle: "waiting", animation: { name: choreography.animation, run: false, loop: false } });
+    // En el campo se repite en el mismo lugar (`field` se conserva); el anfitrión sigue en lo suyo
+    if (isField(choreography)) set({ battle: "waiting", firing: [] });
+    else set({ battle: "waiting", animation: { name: choreography.animation, run: false, loop: false } });
     setTimeout(() => arSession.startIfReady(), 50);
+  },
+  /** Marco del campo frente al usuario: lo calcula la escena con la pose de la cámara */
+  setField(field: NonNullable<ArSessionState["field"]>) {
+    if (!isField(state.choreography) || state.field) return;
+    set({ field });
+    arSession.startIfReady();
+  },
+  /** Un disparo (o un grito, una caída) que suena en un punto del campo, con su humo */
+  fire(cue: Omit<FieldShot, "id">) {
+    const shot = { ...cue, id: ++shotId };
+    set({ firing: [...state.firing, shot] });
+    setTimeout(() => {
+      if (state.firing.includes(shot)) set({ firing: state.firing.filter((s) => s !== shot) });
+    }, SHOT_MS);
   },
   /** Peso (0–1) de la shape key "boca_abierta" del anfitrión, según el visema que suena */
   setMouth,
@@ -247,8 +304,10 @@ export const arSession = {
       modelStatus: "loading",
       faceUser: true,
       editing: false,
-      // Recolocada, la batalla vuelve a empezar cuando carguen los modelos
+      // Recolocada, la batalla vuelve a empezar cuando carguen los modelos (el campo, frente al usuario)
       battle: state.choreography ? "waiting" : "off",
+      field: null,
+      firing: [],
     });
     return true;
   },
@@ -259,7 +318,7 @@ export const arSession = {
   /** Seguir al usuario implica volver a mirarlo */
   setFollow(follow: boolean) {
     // En la batalla la coreografía decide dónde está cada uno
-    if (state.battle !== "off") return;
+    if (hostInChoreography()) return;
     set(follow ? { follow, faceUser: true } : { follow });
   },
   /** Vuelve a girarse solo para mirar al usuario (tras haberlo orientado a mano) */
@@ -311,7 +370,7 @@ export const arSession = {
   talk(speaking: boolean) {
     if (!speaking) setMouth(0);
     // En la batalla los personajes no conversan: la animación no se interrumpe
-    if (state.battle !== "off") return;
+    if (hostInChoreography()) return;
     if (state.walking) {
       set({ speaking });
       return;

@@ -3,10 +3,14 @@ import {
   ViroAmbientLight,
   ViroAnimations,
   ViroARScene,
+  ViroDirectionalLight,
   ViroMaterials,
   ViroNode,
+  ViroParticleEmitter,
   ViroPolygon,
   ViroQuad,
+  ViroSpatialSound,
+  ViroSphere,
   ViroSpotLight,
   ViroTrackingStateConstants,
   type ViroAnchor,
@@ -16,8 +20,16 @@ import {
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { Dimensions, PixelRatio } from "react-native";
 
+import smoke from "@/assets/images/effects/humo.png";
 import { Balloons } from "@/components/ar/Balloons";
-import { arSession, type ArSessionState, type HostCommand, useArSession, type Vec3 } from "@/hooks/useArSession";
+import {
+  arSession,
+  type ArSessionState,
+  type FieldShot,
+  type HostCommand,
+  useArSession,
+  type Vec3,
+} from "@/hooks/useArSession";
 import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
 
 // El piso está entre MIN y MAX_FLOOR_DROP (m) bajo el teléfono, de pie o sentado. Más cerca suele ser
@@ -97,9 +109,19 @@ const EDIT_TURN_SPEED = 240;
 // Al tocar el piso, preferimos los hits más confiables
 const TAP_HIT_PRIORITY = ["ExistingPlane", "DepthPoint", "EstimatedHorizontalPlane", "FeaturePoint"];
 const DEG = Math.PI / 180;
+// Coreografía de campo (las trincheras): su centro queda a esta distancia (m) delante del usuario, así
+// la línea de fuego pasa frente a él y ve un bando a cada lado
+const FIELD_DISTANCE = 3;
+// Por debajo de esto la dirección horizontal de la cámara es inestable (mira recto al piso o al cielo)
+const MIN_FIELD_AIM = 0.2;
+// Sombra del campo: cubre los dos parapetos (a ±7,6 m) y algo más
+const FIELD_SHADOW: [number, number] = [22, 8];
+// Lo que dura el fogonazo de un disparo
+const FLASH_MS = 90;
 
 ViroMaterials.createMaterials({
   reticle: { lightingModel: "Constant", diffuseColor: "#E66F3DEE", cullMode: "None" },
+  fogonazo: { lightingModel: "Constant", diffuseColor: "#FFC46B" },
 });
 
 // Anillo para marcar en el piso dónde aparecerá el personaje
@@ -152,12 +174,19 @@ export function VistaARScene() {
   const battle = useArSession((s) => s.battle);
   const preload = useArSession((s) => s.preload);
   const choreography = useArSession((s) => s.choreography);
+  const field = useArSession((s) => s.field);
+  const firing = useArSession((s) => s.firing);
   // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
   const host = objects.find((o): o is DynamicSceneObject => o.kind === "dynamic");
   const hostId = host?.id;
+  // Coreografía de campo: todo salvo el anfitrión va en el marco del campo; el anfitrión sigue libre
+  const fieldLayout = choreography?.layout === "field";
+  const inField = (obj: SceneObject) => fieldLayout && obj.id !== hostId;
+  // La coreografía en escenario (la batalla) maneja también al anfitrión
+  const stageBattle = battle !== "off" && !fieldLayout;
   // Si llega caminando, su entrada ya define dónde queda: ese no sigue al usuario. En la batalla
   // tampoco: la coreografía decide dónde está cada uno
-  const movableHost = host && !host.entrance && battle === "off" ? host : undefined;
+  const movableHost = host && !host.entrance && !stageBattle ? host : undefined;
   const tracking = useArSession((s) => s.tracking);
   const lastUpdate = useRef(0);
   const lastHitLog = useRef(0);
@@ -503,6 +532,18 @@ export function VistaARScene() {
     if (!arSession.get().editing) arSession.wave();
   }
 
+  /** Marco del campo: FIELD_DISTANCE delante del usuario, con +Z hacia él (un bando a cada lado) */
+  function placeField(placement: { point: Vec3; yaw: number }, camera: Vec3, forward: Vec3) {
+    const [cx, cz] = toPlacementFrame(placement, camera[0], camera[2]);
+    const [fx, fz] = toPlacementFrame(placement, placement.point[0] + forward[0], placement.point[2] + forward[2]);
+    const len = Math.hypot(fx, fz);
+    if (len < MIN_FIELD_AIM) return;
+    const dx = fx / len;
+    const dz = fz / len;
+    if (__DEV__) console.log("[AR] campo", JSON.stringify({ camera: [cx, cz], forward: [dx, dz] }));
+    arSession.setField({ x: cx + dx * FIELD_DISTANCE, z: cz + dz * FIELD_DISTANCE, yaw: Math.atan2(-dx, -dz) / DEG });
+  }
+
   // Las órdenes del modo "mover" llegan desde la UI
   useEffect(() => {
     arSession.onHostControl(onHostCommand);
@@ -516,8 +557,11 @@ export function VistaARScene() {
     const now = Date.now();
     const dt = Math.min(0.1, (now - lastFrameAt.current) / 1000);
     lastFrameAt.current = now;
-    const { placement, follow, faceUser, editing } = arSession.get();
+    const { placement, follow, faceUser, editing, choreography, battle, field, tracking } = arSession.get();
     lastCamera.current = { position: position as Vec3, forward: forward as Vec3 };
+    if (placement && tracking && choreography?.layout === "field" && battle === "waiting" && !field) {
+      placeField(placement, position as Vec3, forward as Vec3);
+    }
     // Sin rastreo la pose de la cámara no es confiable
     const pose = currentPose();
     if (!placement || !pose) return;
@@ -596,7 +640,7 @@ export function VistaARScene() {
   // La batalla se arma donde quedó el anfitrión, mirando hacia donde miraba (hacia el usuario):
   // la animación empieza con Bolívar de frente y Monteverde llega por su izquierda
   const battleAnchor =
-    placement && host && battle !== "off"
+    placement && host && stageBattle
       ? settledPose?.placementId === placement.id
         ? settledPose
         : initialPose(placement.id, host)
@@ -605,7 +649,7 @@ export function VistaARScene() {
   // (ocultos) y, en la batalla, a todos. Cambiar de simulación no cambia el árbol: Viro no desmonta
   // ni vuelve a cargar ningún modelo
   const stage = pose ?? battleAnchor;
-  const onStage = (obj: SceneObject) => !!stage && (battle !== "off" || obj.id === movableHost?.id);
+  const onStage = (obj: SceneObject) => !!stage && !inField(obj) && (stageBattle || obj.id === movableHost?.id);
   const preloaded = preload.filter((p) => !objects.some((o) => o.id === p.id));
   const shadowAt: Vec3 = stage ? [stage.x, stage.y, stage.z] : [0, 0, 0];
 
@@ -673,7 +717,8 @@ export function VistaARScene() {
                     hostAnimation={animation}
                     onTap={onHostTap}
                     size={size}
-                    battle={battle}
+                    // En el campo el anfitrión no es parte de la coreografía
+                    battle={stageBattle ? battle : "off"}
                     battleAnimation={choreography?.animation}
                   />
                 )),
@@ -688,12 +733,45 @@ export function VistaARScene() {
                     preloadOnly
                   />
                 )),
-                ...(battle === "finished" ? [<Balloons key="globos" />] : []),
+                ...(stageBattle && battle === "finished" ? [<Balloons key="globos" />] : []),
               ]}
             </ViroNode>
           )}
+          {field && fieldLayout && (
+            // Campo de la coreografía: cada objeto en su posición real del marco del campo
+            <ViroNode position={[field.x, 0, field.z]} rotation={[0, field.yaw, 0]}>
+              {/* El foco del anfitrión no alcanza: una luz direccional con sombra para todo el campo */}
+              <ViroDirectionalLight
+                direction={[0.35, -1, -0.25]}
+                intensity={400}
+                castsShadow
+                shadowOpacity={0.4}
+                shadowOrthographicSize={30}
+                shadowMapSize={2048}
+                shadowNearZ={1}
+                shadowFarZ={30}
+              />
+              {objects.filter(inField).map((obj) => (
+                <SceneModel
+                  key={obj.id}
+                  obj={obj}
+                  isHost={false}
+                  hostAnimation={animation}
+                  onTap={onHostTap}
+                  size={size}
+                  battle={battle}
+                  battleAnimation={(obj.kind === "dynamic" && obj.choreographyAnimation) || choreography?.animation}
+                />
+              ))}
+              {firing.map((shot) => (
+                <FieldShotEffect key={shot.id} shot={shot} source={choreography?.sounds[shot.sound]} />
+              ))}
+              {battle === "finished" && <Balloons />}
+              <ViroQuad rotation={[-90, 0, 0]} width={FIELD_SHADOW[0]} height={FIELD_SHADOW[1]} arShadowReceiver />
+            </ViroNode>
+          )}
           {objects
-            .filter((obj) => !onStage(obj))
+            .filter((obj) => !onStage(obj) && !inField(obj))
             .map((obj) => (
               <SceneModel
                 key={obj.id}
@@ -720,8 +798,8 @@ export function VistaARScene() {
             ref={shadow}
             position={shadowAt}
             rotation={[-90, 0, 0]}
-            width={battle !== "off" ? 6 : 3}
-            height={battle !== "off" ? 6 : 3}
+            width={stageBattle ? 6 : 3}
+            height={stageBattle ? 6 : 3}
             arShadowReceiver
           />
         </ViroNode>
@@ -807,7 +885,9 @@ function SceneModel({
         animation={modelAnimation}
         // Antes de arrancar la batalla los demás no se ven (estarían en pose de reposo encima del
         // anfitrión), y al terminar el anfitrión ya se fue corriendo
-        visible={!preloadOnly && (!inBattle || (isHost ? battle !== "finished" : battle !== "waiting"))}
+        visible={
+          !preloadOnly && (obj.kind === "static" || !inBattle || (isHost ? battle !== "finished" : battle !== "waiting"))
+        }
         onClick={isHost && !inBattle ? onTap : undefined}
         onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
         onLoadEnd={() => {
@@ -830,6 +910,62 @@ function SceneModel({
           if (isHost) arSession.set({ modelStatus: "error" });
         }}
       />
+    </ViroNode>
+  );
+}
+
+/**
+ * Un disparo en el campo: suena desde la boca del fusil (sonido espacial: se oye de qué lado viene),
+ * con un fogonazo breve y una bocanada de humo que sale hacia el otro bando. Gritos y caídas solo suenan.
+ */
+function FieldShotEffect({ shot, source }: { shot: FieldShot; source?: number }) {
+  const [flash, setFlash] = useState(shot.effect === "humo");
+  useEffect(() => {
+    const timer = setTimeout(() => setFlash(false), FLASH_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  // Los patriotas están en -X y disparan hacia +X; los realistas al revés
+  const dir = shot.at[0] > 0 ? -1 : 1;
+  return (
+    <ViroNode position={shot.at}>
+      {source !== undefined && (
+        <ViroSpatialSound source={source} position={[0, 0, 0]} rolloffModel="Logarithmic" minDistance={2} maxDistance={40} />
+      )}
+      {flash && <ViroSphere radius={0.09} position={[dir * 0.1, 0, 0]} materials={["fogonazo"]} />}
+      {shot.effect === "humo" && (
+        <ViroParticleEmitter
+          duration={300}
+          run
+          loop={false}
+          image={{ source: smoke, height: 0.4, width: 0.4, bloomThreshold: 1 }}
+          spawnBehavior={{
+            emissionRatePerSecond: [0, 0],
+            emissionBurst: { time: 0, min: 12, max: 16, cycles: 1 },
+            particleLifetime: [1800, 2600],
+            maxParticles: 24,
+            spawnVolume: { shape: "sphere", params: [0.12] },
+          }}
+          particleAppearance={{
+            opacity: { initialRange: [0.55, 0.75], factor: "Time", interpolation: [{ interval: [0, 2600], endValue: 0 }] },
+            scale: {
+              initialRange: [
+                [0.5, 0.5, 0.5],
+                [0.8, 0.8, 0.8],
+              ],
+              factor: "Time",
+              interpolation: [{ interval: [0, 2600], endValue: [2.2, 2.2, 2.2] }],
+            },
+          }}
+          particlePhysics={{
+            velocity: {
+              initialRange: [
+                [dir * 0.4, 0.15, -0.15],
+                [dir * 1.0, 0.45, 0.15],
+              ],
+            },
+          }}
+        />
+      )}
     </ViroNode>
   );
 }
