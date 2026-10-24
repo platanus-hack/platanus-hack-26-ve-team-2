@@ -16,6 +16,7 @@ import {
 import { type ComponentProps, useEffect, useRef, useState } from "react";
 import { Dimensions, PixelRatio } from "react-native";
 
+import { Balloons } from "@/components/ar/Balloons";
 import { arSession, type ArSessionState, type HostCommand, useArSession, type Vec3 } from "@/hooks/useArSession";
 import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
 
@@ -148,11 +149,14 @@ export function VistaARScene() {
   // Tamaño de los modelos: corrección automática de la colocación por el ajuste manual
   const sizeScale = useArSession((s) => s.sizeScale);
   const size = (placement?.autoScale ?? 1) * sizeScale;
+  const battle = useArSession((s) => s.battle);
+  const choreography = useArSession((s) => s.choreography);
   // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
   const host = objects.find((o): o is DynamicSceneObject => o.kind === "dynamic");
   const hostId = host?.id;
-  // Si llega caminando, su entrada ya define dónde queda: ese no sigue al usuario
-  const movableHost = host && !host.entrance ? host : undefined;
+  // Si llega caminando, su entrada ya define dónde queda: ese no sigue al usuario. En la batalla
+  // tampoco: la coreografía decide dónde está cada uno
+  const movableHost = host && !host.entrance && battle === "off" ? host : undefined;
   const tracking = useArSession((s) => s.tracking);
   const lastUpdate = useRef(0);
   const lastHitLog = useRef(0);
@@ -588,7 +592,16 @@ export function VistaARScene() {
         ? settledPose
         : initialPose(placement.id, movableHost)
       : null;
-  const shadowAt: Vec3 = pose ? [pose.x, pose.y, pose.z] : [0, 0, 0];
+  // La batalla se arma donde quedó el anfitrión, mirando hacia donde miraba (hacia el usuario):
+  // la animación empieza con Bolívar de frente y Monteverde llega por su izquierda
+  const battleAnchor =
+    placement && host && battle !== "off"
+      ? settledPose?.placementId === placement.id
+        ? settledPose
+        : initialPose(placement.id, host)
+      : null;
+  const anchor = pose ?? battleAnchor;
+  const shadowAt: Vec3 = anchor ? [anchor.x, anchor.y, anchor.z] : [0, 0, 0];
 
   return (
     <ViroARScene
@@ -640,7 +653,24 @@ export function VistaARScene() {
             shadowNearZ={2}
             shadowFarZ={7}
           />
-          {objects.map((obj) =>
+          {battleAnchor && choreography ? (
+            // A la altura del piso donde quedó el anfitrión (si se lo llevó tocando el piso, ver HostPose)
+            <ViroNode position={[battleAnchor.x, battleAnchor.y, battleAnchor.z]} rotation={[0, battleAnchor.yaw, 0]}>
+              {objects.map((obj) => (
+                <SceneModel
+                  key={obj.id}
+                  obj={obj}
+                  isHost={obj.id === hostId}
+                  hostAnimation={animation}
+                  onTap={onHostTap}
+                  size={size}
+                  battle={battle}
+                  battleAnimation={choreography.animation}
+                />
+              ))}
+              {battle === "finished" && <Balloons />}
+            </ViroNode>
+          ) : objects.map((obj) =>
             pose && movableHost && obj.id === movableHost.id ? (
               // El nodo lleva la pose que mueven el seguimiento y el modo "mover"; el modelo queda en su origen
               <ViroNode key={obj.id} ref={hostNode} position={[pose.x, pose.y, pose.z]} rotation={[0, pose.yaw, 0]}>
@@ -668,8 +698,15 @@ export function VistaARScene() {
               ignoreEventHandling
             />
           )}
-          {/* Sombra sobre el piso real para que el personaje no se vea flotando */}
-          <ViroQuad ref={shadow} position={shadowAt} rotation={[-90, 0, 0]} width={3} height={3} arShadowReceiver />
+          {/* Sombra sobre el piso real para que el personaje no se vea flotando (en la batalla cubre la pelea) */}
+          <ViroQuad
+            ref={shadow}
+            position={shadowAt}
+            rotation={[-90, 0, 0]}
+            width={battleAnchor ? 6 : 3}
+            height={battleAnchor ? 6 : 3}
+            arShadowReceiver
+          />
         </ViroNode>
       )}
     </ViroARScene>
@@ -684,9 +721,12 @@ type SceneModelProps = {
   onTap: () => void;
   /** Factor de tamaño sobre la escala del modelo */
   size: number;
+  battle?: ArSessionState["battle"];
+  /** Animación de la coreografía que reproducen los que no son el anfitrión */
+  battleAnimation?: string;
 };
 
-function SceneModel({ obj, isHost, hostAnimation, onTap, size }: SceneModelProps) {
+function SceneModel({ obj, isHost, hostAnimation, onTap, size, battle = "off", battleAnimation }: SceneModelProps) {
   const entrance = obj.kind === "dynamic" ? obj.entrance : undefined;
   const [loaded, setLoaded] = useState(false);
   const model = useRef<Viro3DObject>(null);
@@ -707,10 +747,15 @@ function SceneModel({ obj, isHost, hostAnimation, onTap, size }: SceneModelProps
   }, [isHost, loaded]);
 
   const loop = obj.kind === "dynamic" && obj.animation;
+  const inBattle = battle !== "off";
   const modelAnimation = isHost
-    ? // Saluda (al aparecer y al tocarlo) y gesticula al hablar; sin animación de reposo se queda en la pose final
+    ? // Saluda (al aparecer y al tocarlo) y gesticula al hablar; sin animación de reposo se queda en la pose final.
+      // En la batalla arranca con `playBattle`
       hostAnimation
-    : walking && entrance?.walkAnimation
+    : inBattle && battleAnimation
+      ? // Arranca junto con el anfitrión; al terminar se queda en la pose final
+        { name: battleAnimation, run: battle === "playing" || battle === "finished", loop: false }
+      : walking && entrance?.walkAnimation
       ? { name: entrance.walkAnimation, run: true, loop: true }
       : loop
         ? { name: loop, run: true, loop: true }
@@ -730,12 +775,16 @@ function SceneModel({ obj, isHost, hostAnimation, onTap, size }: SceneModelProps
         rotation={obj.transform.rotation}
         scale={[obj.transform.scale[0] * size, obj.transform.scale[1] * size, obj.transform.scale[2] * size]}
         animation={modelAnimation}
-        onClick={isHost ? onTap : undefined}
+        // Antes de arrancar la batalla los demás no se ven (estarían en pose de reposo encima del
+        // anfitrión), y al terminar el anfitrión ya se fue corriendo
+        visible={!inBattle || (isHost ? battle !== "finished" : battle !== "waiting")}
+        onClick={isHost && !inBattle ? onTap : undefined}
         onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
         onLoadEnd={() => {
           if (__DEV__) console.log("[AR] modelo cargado", obj.id);
           // Empieza a caminar recién cuando el modelo está listo, si no llegaría ya a mitad de camino
           setLoaded(true);
+          arSession.markLoaded(obj.id);
           if (!isHost) return;
           // Para el lipsync: el modelo tiene que traer la shape key "boca_abierta"
           if (__DEV__)
@@ -744,7 +793,7 @@ function SceneModel({ obj, isHost, hostAnimation, onTap, size }: SceneModelProps
               .then((targets: unknown) => console.log("[AR] shape keys", obj.id, JSON.stringify(targets)))
               .catch((e: unknown) => console.warn("[AR] no se pudieron leer las shape keys", e));
           arSession.set({ modelStatus: "ready" });
-          arSession.wave();
+          if (arSession.get().battle === "off") arSession.wave();
         }}
         onError={(event) => {
           console.warn("[AR] error cargando modelo", obj.id, event?.nativeEvent ?? event);

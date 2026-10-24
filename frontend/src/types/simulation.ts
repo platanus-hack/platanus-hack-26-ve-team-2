@@ -42,10 +42,31 @@ export interface Entrance {
 
 export type SceneObject = StaticSceneObject | DynamicSceneObject;
 
+/** Efecto de sonido en un momento fijo de la coreografía. */
+export interface SoundCue {
+  atMs: number;
+  sound: string;
+}
+
+/**
+ * Escena coreografiada (p. ej. la batalla): todos los personajes reproducen a la vez la animación
+ * `animation`, horneada en Blender en el mismo marco y con la misma duración, mientras suenan los efectos.
+ */
+export interface Choreography {
+  animation: string;
+  durationMs: number;
+  cues: SoundCue[];
+  /** Assets de cada sonido que nombran los cues (y el del final) */
+  sounds: Record<string, number>;
+  /** Al terminar caen globos con los logos de los sponsors, con este sonido */
+  finale?: { sound: string };
+}
+
 /** Simulación lista para montar: lo que devolvió la API + los objetos locales. */
 export interface LoadedSimulation {
   simulationId: string;
   regionId: string;
   voiceLocationId: string;
   objects: SceneObject[];
+  choreography?: Choreography;
 }

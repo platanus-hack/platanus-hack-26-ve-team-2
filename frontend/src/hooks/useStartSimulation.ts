@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 
 import { ApiError, clientApi } from "@/api";
-import { getSimulationObjects } from "@/data/simulationObjects";
+import { getSimulationChoreography, getSimulationObjects } from "@/data/simulationObjects";
 import type { LoadedSimulation } from "@/types/simulation";
 
 /**
@@ -31,6 +31,7 @@ export function useStartSimulation() {
         regionId: res.region_id,
         voiceLocationId: res.voice_location_id,
         objects,
+        choreography: getSimulationChoreography(res.simulation_id),
       };
     } catch (e) {
       setError(e as ApiError);
