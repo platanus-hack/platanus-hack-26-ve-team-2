@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import Svg, { Circle, Path } from "react-native-svg";
 
-import { colors } from "@/lib/theme";
+import { colors } from "@/theme";
 
 export type IconName =
   | "search"

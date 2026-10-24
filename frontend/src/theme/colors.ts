@@ -1,3 +1,4 @@
+/** Paleta VISTA. Los componentes consumen estos tokens, nunca hex sueltos nuevos. */
 export const colors = {
   ink: "#18211d",
   cream: "#f8f6f0",
@@ -9,13 +10,6 @@ export const colors = {
   blue: "#3b88e8",
   success: "#48a878",
   successHalo: "#d9ecdf",
-};
+} as const;
 
-export const fonts = {
-  regular: "DMSans_400Regular",
-  medium: "DMSans_500Medium",
-  semibold: "DMSans_600SemiBold",
-  bold: "DMSans_700Bold",
-  displayBold: "Manrope_700Bold",
-  display: "Manrope_800ExtraBold",
-};
+export type ColorToken = keyof typeof colors;

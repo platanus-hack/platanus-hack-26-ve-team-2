@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { api } from "@/lib/api";
+import { clientApi } from "@/api";
 
 type ApiStatus = "conectando..." | "ok" | "sin conexión";
 
@@ -8,8 +8,8 @@ export function useApiHealth(): ApiStatus {
   const [status, setStatus] = useState<ApiStatus>("conectando...");
 
   useEffect(() => {
-    api
-      .health()
+    clientApi.health
+      .check()
       .then(() => setStatus("ok"))
       .catch(() => setStatus("sin conexión"));
   }, []);

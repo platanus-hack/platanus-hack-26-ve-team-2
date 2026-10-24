@@ -1,7 +1,7 @@
 import { StyleSheet, View } from "react-native";
 
-import { Icon } from "@/components/icon";
-import { colors } from "@/lib/theme";
+import { Icon } from "@/components/common";
+import { colors } from "@/theme";
 
 // La punta del pin rotado queda en ~97% de la altura del contenedor
 export const PIN_ANCHOR = { x: 0.5, y: 0.97 };
@@ -25,15 +25,6 @@ export function SitePin({ active }: { active: boolean }) {
   );
 }
 
-export function UserDot() {
-  return (
-    <View style={styles.userWrap}>
-      <View style={styles.userHalo} />
-      <View style={styles.userDot} />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   wrap: { alignItems: "center", justifyContent: "center" },
   pin: {
@@ -53,20 +44,4 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   icon: { transform: [{ rotate: "45deg" }] },
-  userWrap: { width: 72, height: 72, alignItems: "center", justifyContent: "center" },
-  userHalo: {
-    position: "absolute",
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "rgba(59,136,232,0.16)",
-  },
-  userDot: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: colors.blue,
-    borderWidth: 4,
-    borderColor: "white",
-  },
 });

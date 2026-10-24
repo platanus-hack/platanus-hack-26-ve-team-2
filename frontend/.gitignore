@@ -42,5 +42,6 @@ example
 /ios
 /android
 
-# env
-.env
+
+# .env del frontend se versiona (solo EXPO_PUBLIC_*); el de la raíz sigue ignorando backend/.env
+!.env
