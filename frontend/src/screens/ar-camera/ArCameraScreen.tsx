@@ -90,9 +90,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   );
   const placed = useArSession((s) => s.placement !== null);
   const modelStatus = useArSession((s) => s.modelStatus);
-  const occlusion = useArSession((s) => s.occlusion);
   const follow = useArSession((s) => s.follow);
-  const depthSupported = occlusion === "supported";
 
   const { region } = active;
   const current = region.simulations.find((s) => s.id === active.simulationId);
@@ -159,8 +157,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
       return { title: "Escaneando el piso…", subtitle: "Apunta al piso y mueve el teléfono de lado a lado" };
     return { title: "Apunta la cámara al piso", subtitle: "Busca una zona despejada a 1 o 2 metros" };
   })();
-  // Esperamos a saber si hay oclusión: activarla con el personaje ya colocado lo oculta entero
-  const canStart = hasObjects && tracking && hasFloor && occlusion !== "checking";
+  const canStart = hasObjects && tracking && hasFloor;
 
   const placedHint = (() => {
     if (modelStatus === "error") return "No se pudo cargar el personaje";
@@ -182,10 +179,11 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
           initialScene={{ scene: VistaARScene }}
           // Sin anchors en la nube: todo es local al teléfono
           provider="none"
-          // Mesas, sillas o personas más cerca que el personaje lo tapan, como en la vida real.
-          // Se activa antes de colocar al personaje: cambiarla con el modelo ya cargado lo oculta entero
-          // (bug de Viro). El margen para que el piso no tape los pies lo pone scripts/patch-viro-occlusion.js
-          occlusionMode={depthSupported ? "depthBased" : "disabled"}
+          // Sin oclusión: con la profundidad de ARCore el personaje se tapaba a pedazos
+          occlusionMode="disabled"
+          // Pero sí la profundidad: da hits "DepthPoint" en pisos lisos (alfombra, baldosa) donde ARCore
+          // casi no encuentra puntos de textura, y así el piso se detecta mucho antes
+          depthEnabled
           style={StyleSheet.absoluteFill}
         />
       )}

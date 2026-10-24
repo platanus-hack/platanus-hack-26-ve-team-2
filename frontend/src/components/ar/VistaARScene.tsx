@@ -14,6 +14,7 @@ import {
   type ViroCameraTransform,
 } from "@reactvision/react-viro";
 import { useEffect, useRef, useState } from "react";
+import { Dimensions, PixelRatio } from "react-native";
 
 import { arSession, type ArSessionState, useArSession, type Vec3 } from "@/hooks/useArSession";
 import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
@@ -22,8 +23,9 @@ import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
 const MIN_FLOOR_DROP = 0.6;
 // Un plano cuenta como piso si está a esta distancia (m) del plano horizontal más bajo
 const FLOOR_TOLERANCE = 0.15;
-// Ignoramos planos diminutos, que suelen ser ruido
-const MIN_PLANE_AREA = 0.2;
+// Ignoramos planos diminutos, que suelen ser ruido. Bajo: los primeros planos que da ARCore son chicos
+// y esperar a que crezcan retrasaba mucho la detección (igual gana el más grande)
+const MIN_PLANE_AREA = 0.06;
 // En algunos Android ARCore alterna NORMAL/UNAVAILABLE varias veces por segundo: solo damos el
 // rastreo por perdido si sigue así este tiempo, si no el personaje nunca llega a colocarse
 const TRACKING_LOST_GRACE_MS = 1000;
@@ -31,17 +33,29 @@ const TRACKING_LOST_GRACE_MS = 1000;
 // el usuario igual pueda colocar al personaje tocando el botón
 // Cuando el rastreo de ARCore diverge devuelve hits a decenas de metros: no son el piso
 const MAX_HIT_DISTANCE = 4;
+// Para conocer solo la altura del piso aceptamos hits más lejanos: mirando al frente con poca
+// inclinación el centro de la pantalla corta el piso a 4–6 m
+const MAX_LEVEL_HIT_DISTANCE = 8;
+// Mirando al frente el centro de la pantalla ve el piso lejos y con poca textura: además probamos
+// puntos de la parte baja (fracción del ancho/alto), donde el piso está a 1–2 m, para medir su altura.
+// No tan abajo: ahí suele quedar el dedo que sostiene el teléfono tapando la cámara
+const PROBE_POINTS: [number, number][] = [
+  [0.5, 0.62],
+  [0.3, 0.72],
+  [0.7, 0.72],
+];
+const PROBE_INTERVAL_MS = 300;
 // La mayoría de los frames no traen hit: mantenemos el último punto un rato para que el
 // anillo (y el botón) no parpadeen
 const FLOOR_HOLD_MS = 1500;
-const FALLBACK_HIT_TYPES = new Set(["ExistingPlane", "EstimatedHorizontalPlane", "FeaturePoint", "DepthPoint"]);
+const FALLBACK_HIT_TYPES = new Set(["EstimatedHorizontalPlane", "FeaturePoint", "DepthPoint"]);
+const isFallbackHit = (type: string) => type.startsWith("ExistingPlane") || FALLBACK_HIT_TYPES.has(type);
 // El anillo va donde el rayo del centro de la pantalla corta el plano del piso: inclinar el teléfono
 // lo acerca o lo aleja. Lo limitamos a este rango horizontal (m) para que no quede bajo los pies ni
 // en el horizonte cuando se apunta recto o por encima de él
 const MIN_PLACE_DISTANCE = 0.8;
 const MAX_PLACE_DISTANCE = 6;
-// Solo el anillo flota apenas sobre el piso (el personaje no): a ras del piso el ruido del mapa de
-// profundidad hacía que la oclusión lo tapara a pedazos
+// Solo el anillo flota apenas sobre el piso (el personaje no), para que no parpadee contra él
 const RETICLE_LIFT = 0.04;
 // El anfitrión camina hacia el usuario si se aleja más de FOLLOW_START (m) y se detiene al quedar a
 // FOLLOW_STOP; la diferencia evita que arranque y frene a cada paso
@@ -77,10 +91,7 @@ const RING = (() => {
   return { outer, holes: [inner] };
 })();
 
-// Viro inyecta arSceneNavigator en la escena
-type SceneProps = {
-  arSceneNavigator?: { isDepthOcclusionSupported?: () => Promise<{ supported: boolean }> };
-};
+type HitResult = { type: string; transform: { position: number[] } };
 
 /** Pose del anfitrión sobre el piso, relativa al nodo de colocación; la mueve el bucle de seguimiento. */
 type HostPose = { placementId: number; x: number; z: number; yaw: number; turning: boolean; walking: boolean };
@@ -96,7 +107,7 @@ function wrapDegrees(a: number): number {
   return r > 180 ? r - 360 : r;
 }
 
-export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
+export function VistaARScene() {
   const placement = useArSession((s) => s.placement);
   const floor = useArSession((s) => s.floor);
   const animation = useArSession((s) => s.animation);
@@ -114,6 +125,11 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
   const planes = useRef(new Map<string, { y: number; area: number }>());
   // Altura del último plano real que tocó el centro de la pantalla: es el piso que el usuario está viendo
   const aimLevel = useRef<number | null>(null);
+  // Altura del piso según los hit tests de la parte baja de la pantalla
+  const probeLevel = useRef<number | null>(null);
+  const lastProbe = useRef(0);
+  const probing = useRef(false);
+  const scene = useRef<ViroARScene>(null);
   const trackingLostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hostPose = useRef<HostPose | null>(null);
   // Copia de la pose cada vez que se queda quieto: es la que va en las props de React
@@ -128,15 +144,8 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
     if (trackingLostTimer.current) clearTimeout(trackingLostTimer.current);
   }, []);
 
-  useEffect(() => {
-    arSceneNavigator
-      ?.isDepthOcclusionSupported?.()
-      .then(({ supported }) => arSession.set({ occlusion: supported ? "supported" : "unsupported" }))
-      .catch(() => arSession.set({ occlusion: "unsupported" }));
-  }, [arSceneNavigator]);
-
   // El piso es el plano horizontal más grande. No usamos el más bajo: ARCore a veces detecta planos
-  // fantasma decenas de cm bajo el piso real y el anillo quedaba enterrado (y oculto por la oclusión)
+  // fantasma decenas de cm bajo el piso real y el anillo quedaba enterrado
   function largestPlaneY(): number | null {
     let best: { y: number; area: number } | null = null;
     for (const p of planes.current.values()) if (!best || p.area > best.area) best = p;
@@ -194,6 +203,48 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
     return [camera[0] + (dx / len) * d, floorLevel, camera[2] + (dz / len) * d];
   }
 
+  /** Altura del piso más confiable entre hits: primero planos reales, si no puntos de respaldo. */
+  function levelFromHits(results: HitResult[], camera: Vec3): number | undefined {
+    const usable = results.filter(({ transform: { position: [x, y, z] } }) =>
+      camera[1] - y > MIN_FLOOR_DROP &&
+      Math.hypot(x - camera[0], y - camera[1], z - camera[2]) < MAX_LEVEL_HIT_DISTANCE,
+    );
+    return (
+      usable.find((r) => r.type.startsWith("ExistingPlane")) ?? usable.find((r) => isFallbackHit(r.type))
+    )?.transform.position[1];
+  }
+
+  // Hit tests en la parte baja de la pantalla (asíncronos, sin solaparse) para medir la altura del piso
+  function probeFloor(camera: Vec3, now: number) {
+    if (probing.current || !scene.current || now - lastProbe.current < PROBE_INTERVAL_MS) return;
+    lastProbe.current = now;
+    probing.current = true;
+    const { width, height } = Dimensions.get("window");
+    const ratio = PixelRatio.get();
+    // Viro espera píxeles físicos (enteros en Android)
+    Promise.all(
+      PROBE_POINTS.map(([fx, fy]) =>
+        scene
+          .current!.performARHitTestWithPoint(Math.round(fx * width * ratio), Math.round(fy * height * ratio))
+          .catch((e: unknown) => {
+            if (__DEV__) console.warn("[AR] probe falló", e);
+            return [];
+          }),
+      ),
+    )
+      .then((all: HitResult[][]) => {
+        const levels = all.map((r) => levelFromHits(r ?? [], camera)).filter((l) => l !== undefined);
+        if (!levels.length) return;
+        // La mediana descarta un punto suelto (una silla, un zócalo)
+        levels.sort((a, b) => a - b);
+        probeLevel.current = levels[Math.floor(levels.length / 2)];
+        if (__DEV__) console.log("[AR] probe", JSON.stringify({ levels, camera }));
+      })
+      .finally(() => {
+        probing.current = false;
+      });
+  }
+
   // Se dispara cada frame con el hit test del centro de la pantalla
   function onCameraARHitTest({ hitTestResults, cameraOrientation }: ViroCameraARHitTest) {
     if (arSession.get().placement) return;
@@ -210,6 +261,7 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
         JSON.stringify({ camera, floorY, hits: hitTestResults.map((r) => [r.type, r.transform?.position]) }),
       );
     }
+    probeFloor(camera, now);
     const belowCamera = (y: number) => camera[1] - y > MIN_FLOOR_DROP;
     const near = ([x, y, z]: number[]) =>
       Math.hypot(x - camera[0], y - camera[1], z - camera[2]) < MAX_HIT_DISTANCE;
@@ -218,14 +270,14 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
     const planeHit = hits.find((r) => r.type.startsWith("ExistingPlane") && belowCamera(r.transform.position[1]));
     if (planeHit) aimLevel.current = planeHit.transform.position[1];
     // Si no (apuntando más lejos o al horizonte), basta conocer la altura del piso: el último plano
-    // apuntado, el plano de piso detectado o, sin planos todavía, un hit menos preciso
-    const aimed = aimLevel.current !== null && belowCamera(aimLevel.current) ? aimLevel.current : null;
+    // apuntado, el plano de piso detectado, la altura medida en la parte baja de la pantalla o, si no,
+    // un hit (más lejano o menos preciso) del centro
+    const level = (y: number | null) => (y !== null && belowCamera(y) ? y : undefined);
     const floorLevel =
-      aimed ??
-      (floorY !== null && belowCamera(floorY)
-        ? floorY
-        : hits.find((r) => FALLBACK_HIT_TYPES.has(r.type) && belowCamera(r.transform.position[1]))?.transform
-            .position[1]);
+      level(aimLevel.current) ??
+      level(floorY) ??
+      level(probeLevel.current) ??
+      levelFromHits(hitTestResults, camera);
     const hit = hits.find((r) => floorLevel !== undefined && Math.abs(r.transform.position[1] - floorLevel) < FLOOR_TOLERANCE);
     const point = planeHit
       ? (planeHit.transform.position as Vec3)
@@ -311,6 +363,7 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
 
   return (
     <ViroARScene
+      ref={scene}
       anchorDetectionTypes={["PlanesHorizontal"]}
       onTrackingUpdated={onTrackingUpdated}
       onCameraARHitTest={onCameraARHitTest}

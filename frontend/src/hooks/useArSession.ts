@@ -13,8 +13,6 @@ export type ArSessionState = {
   tracking: boolean;
   /** Altura (y) del plano horizontal más bajo detectado: lo tratamos como el piso */
   floorY: number | null;
-  /** Si el teléfono soporta profundidad (ARCore Depth API) */
-  occlusion: "checking" | "supported" | "unsupported";
   /** Punto del piso al que apunta el centro de la pantalla */
   floor: { point: Vec3; camera: Vec3 } | null;
   /** Dónde quedó anclado el personaje (y su giro para mirar a la cámara) */
@@ -35,11 +33,10 @@ const initialState: ArSessionState = {
   objects: [],
   tracking: false,
   floorY: null,
-  occlusion: "checking",
   floor: null,
   placement: null,
   animation: { name: "saludo", run: false, loop: false },
-  follow: true,
+  follow: false,
   walking: false,
   speaking: false,
   mouth: 0,
@@ -57,13 +54,10 @@ function set(partial: Partial<ArSessionState>) {
 export const arSession = {
   get: () => state,
   set,
-  // Conserva el soporte de oclusión ya conocido: así la próxima sesión arranca con la configuración
-  // final y ARCore no se reconfigura (pausa y reanuda) justo al iniciar
-  // y la preferencia de seguir al usuario
-  reset: () => set({ ...initialState, occlusion: state.occlusion, follow: state.follow }),
+  // Conserva la preferencia de seguir al usuario
+  reset: () => set({ ...initialState, follow: state.follow }),
   /**
-   * Otra simulación: se vuelven a colocar los objetos. No toca `tracking`, `floorY` ni
-   * `occlusion`: reflejan la sesión nativa de ARKit/ARCore, que Viro solo reporta cuando
+   * Otra simulación: se vuelven a colocar los objetos. No toca `tracking` ni `floorY`: reflejan la sesión nativa de ARKit/ARCore, que Viro solo reporta cuando
    * cambian; pisarlos dejaría la UI esperando un evento que no vuelve a llegar.
    */
   loadObjects(objects: SceneObject[]) {
