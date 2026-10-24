@@ -18,6 +18,14 @@ class AudioInput:
 
 
 @dataclass(frozen=True, slots=True)
+class ImageInput:
+    """Captura de lo que enfoca la cámara del visitante (JPEG o PNG)."""
+
+    data: bytes
+    mime_type: str
+
+
+@dataclass(frozen=True, slots=True)
 class ChatMessage:
     role: Literal["user", "assistant"]
     content: str
@@ -90,3 +98,9 @@ class TextToSpeech(Provider):
     @abstractmethod
     async def synthesize(self, text: str, voice_id: str, language: str) -> SpeechAudio:
         """Audio + timestamps por carácter (para lipsync). Sin timestamps: lista vacía."""
+
+
+class VisionModel(Provider):
+    @abstractmethod
+    def stream(self, request: ChatRequest, image: ImageInput) -> AsyncIterator[str]:
+        """Respuesta del personaje sobre lo que muestra la imagen, en fragmentos."""

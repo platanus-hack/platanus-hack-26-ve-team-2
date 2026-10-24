@@ -33,10 +33,25 @@ class Location:
     knows_history: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class Landmarks:
+    """Lugares y objetos emblemáticos de un personaje (landmarks.yaml), para reconocerlos."""
+
+    character_id: str
+    places: list[dict[str, str]]
+    objects: list[dict[str, str]]
+
+
 class PersonaCatalog:
-    def __init__(self, locations: dict[str, Location], system_template: str) -> None:
+    def __init__(
+        self,
+        locations: dict[str, Location],
+        system_template: str,
+        landmarks: Landmarks | None = None,
+    ) -> None:
         self.locations = locations
         self._template = _env.from_string(system_template)
+        self._landmarks = landmarks
 
     @classmethod
     def from_yaml(cls, path: Path) -> "PersonaCatalog":
@@ -45,7 +60,13 @@ class PersonaCatalog:
         for loc_id, loc in raw["locations"].items():
             chars = {cid: Character(id=cid, **c) for cid, c in loc.pop("characters").items()}
             locations[loc_id] = Location(id=loc_id, characters=chars, **loc)
-        return cls(locations, raw["system_template"])
+        # Los emblemáticos van en su propio archivo, junto a personas.yaml
+        landmarks = None
+        landmarks_path = path.with_name("landmarks.yaml")
+        if landmarks_path.exists():
+            lm = yaml.safe_load(landmarks_path.read_text(encoding="utf-8"))
+            landmarks = Landmarks(lm["personaje"], lm["lugares"], lm["objetos"])
+        return cls(locations, raw["system_template"], landmarks)
 
     def get(self, location_id: str, character_id: str) -> tuple[Location, Character]:
         try:
@@ -56,9 +77,20 @@ class PersonaCatalog:
                 f"Personaje '{character_id}' no existe en '{location_id}'"
             ) from None
 
-    def system_prompt(self, loc: Location, char: Character, context: str | None = None) -> str:
-        """`context` reemplaza el contexto de la ubicación (p. ej. el prompt de una simulación)."""
+    def system_prompt(
+        self, loc: Location, char: Character, context: str | None = None, looking: bool = False
+    ) -> str:
+        """`context` reemplaza el contexto de la ubicación (p. ej. el prompt de una simulación).
+        `looking`: el personaje ya mira la captura de la cámara (sin la regla de pedirla)."""
         others = [c.name for c in loc.characters.values() if c.id != char.id]
+        landmarks = (
+            self._landmarks if self._landmarks and self._landmarks.character_id == char.id else None
+        )
         return self._template.render(
-            location=loc, character=char, others=others, context=context or loc.context
+            location=loc,
+            character=char,
+            others=others,
+            context=context or loc.context,
+            landmarks=landmarks,
+            looking=looking,
         )

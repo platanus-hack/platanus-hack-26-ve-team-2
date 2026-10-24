@@ -18,6 +18,7 @@ import { useSimulationConversation } from "@/hooks/useSimulationConversation";
 import { useStartSimulation } from "@/hooks/useStartSimulation";
 import { colors, fonts } from "@/theme";
 import { followCommand } from "@/utils/followCommands";
+import type { ImageFile } from "@/types/voice";
 import { mouthOpenness } from "@/utils/lipsync";
 
 type CameraPermission = "pending" | "granted" | "denied";
@@ -80,9 +81,20 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const focused = useIsFocused();
   // Lo primero al entrar a la simulación: pedir el micrófono
   const mic = useMicrophonePermission();
+  const navigator = useRef<ViroARSceneNavigator>(null);
+  // "¿Qué es esto?": captura de la vista RA (cámara + escena) para que el personaje la mire. Viro la
+  // guarda como JPEG en la caché; el personaje 3D sale en ella y el servidor le pide ignorarlo
+  async function captureFrame(): Promise<ImageFile | null> {
+    const result = await navigator.current?._takeScreenshot(`mirar-${Date.now()}`, false);
+    if (!result?.success || !result.url) return null;
+    const url: string = result.url;
+    return { uri: url.startsWith("file://") ? url : `file://${url}`, name: "captura.jpg", type: "image/jpeg" };
+  }
   // Lipsync: el visema que suena mueve la boca del anfitrión directo en el modelo nativo
-  const conversation = useSimulationConversation(active.simulationId, (viseme) =>
-    arSession.setMouth(mouthOpenness(viseme)),
+  const conversation = useSimulationConversation(
+    active.simulationId,
+    (viseme) => arSession.setMouth(mouthOpenness(viseme)),
+    captureFrame,
   );
   const [scenesOpen, setScenesOpen] = useState(false);
 
@@ -111,7 +123,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
 
   const { region } = active;
   const current = region.simulations.find((s) => s.id === active.simulationId);
-  const { phase, lastTurn, error } = conversation;
+  const { phase, lastTurn, error, looking } = conversation;
   const hasObjects = active.objects.length > 0;
 
   const cooledDown = useArCooldown();
@@ -219,6 +231,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
           rastreo puede no volver a reportarse (se queda en "Escaneando el entorno…") */}
       {arMounted && (
         <ViroARSceneNavigator
+          ref={navigator}
           autofocus
           initialScene={{ scene: VistaARScene }}
           // Sin anchors en la nube: todo es local al teléfono
@@ -335,6 +348,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
               <Text style={[styles.remaining, error && styles.error]} numberOfLines={2}>
                 {placedHint ??
                   error ??
+                  (looking ? "Mirando lo que me muestras…" : null) ??
                   (lastTurn?.transcript ? `Tú: “${lastTurn.transcript}”` : "Pregúntale lo que quieras")}
               </Text>
             </View>

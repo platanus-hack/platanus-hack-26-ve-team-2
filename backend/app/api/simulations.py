@@ -6,11 +6,15 @@ por la red ni puede alterarlo el cliente.
 
 Dos formas de preguntar: REST (`/ask`, todo en una respuesta) o WebSocket (`/ws`, más rápido: la
 sesión se abre al conectar y el audio llega frase por frase).
+
+"¿Qué es esto?": si la pregunta es por lo que enfoca la cámara, el WebSocket avisa
+{"type":"look","look_id"} y la app sube la captura a `POST /{simulation_id}/look/{look_id}`; el
+personaje la mira y responde en el mismo turno. Por REST la captura viaja junto al audio (`image`).
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, WebSocket, status
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile, WebSocket, status
 from pydantic import TypeAdapter, ValidationError
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
@@ -21,7 +25,7 @@ from app.schemas.voice import WsAudioEnd, WsEnd
 from app.simulations.domain import Simulation
 from app.simulations.errors import SimulationError
 from app.voice.errors import InvalidInputError, VoiceError, VoiceUnavailableError
-from app.voice.ports import AudioInput
+from app.voice.ports import AudioInput, ImageInput
 from app.voice.service import ConversationService
 from app.voice.sessions import VoiceSession
 
@@ -37,6 +41,10 @@ async def ask(
     session_id: Annotated[
         str | None, Form(max_length=64, description="De la respuesta anterior, si hay")
     ] = None,
+    image: Annotated[
+        UploadFile | None,
+        File(description='Captura de lo que enfoca la cámara, por si pregunta "¿qué es esto?"'),
+    ] = None,
 ) -> SimulationTurnOut:
     """Pregunta por voz -> transcripción, respuesta del personaje y audio con visemas (lipsync)."""
     try:
@@ -45,8 +53,9 @@ async def ask(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
 
     audio_in = await read_audio(audio, voice)
+    image_in = await read_image(image, voice) if image is not None else None
     session = await _session_for(voice, simulation, session_id)
-    turn = await collect_turn(voice, session, audio=audio_in)
+    turn = await collect_turn(voice, session, audio=audio_in, image=image_in)
     _, character = voice.catalog.get(simulation.voice_location_id, simulation.character_id)
     return SimulationTurnOut(
         **turn.model_dump(),
@@ -113,7 +122,7 @@ async def ask_ws(
                 if voice.get_session(session.id) is None:
                     session = await _session_for(voice, simulation, None)
                     await ws.send_json({"type": "session", "session_id": session.id})
-                await ws_turn(ws, voice, session, audio=audio)
+                await ws_turn(ws, voice, session, audio=audio, request_image=True)
             except ValidationError:
                 await ws_error(ws, InvalidInputError("Mensaje inválido"))
             except VoiceError as e:
@@ -125,6 +134,34 @@ async def ask_ws(
     # La sesión no se cierra: la app puede reconectar (o usar /ask) con el mismo session_id
     if ws.client_state == WebSocketState.CONNECTED:
         await ws.close()
+
+
+@router.post("/{simulation_id}/look/{look_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def look(
+    simulation_id: str,
+    look_id: str,
+    voice: VoiceDep,
+    image: Annotated[UploadFile, File(description="Captura de lo que enfoca la cámara")],
+) -> Response:
+    """Captura pedida por el WebSocket (`look`): el turno que la espera la mira y responde."""
+    image_in = await read_image(image, voice)
+    if not voice.looks.deliver(look_id, image_in):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Nadie espera esa captura (expiró)")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def read_image(upload: UploadFile, voice: ConversationService) -> ImageInput:
+    limit = voice.limits.max_image_bytes
+    data = await upload.read(limit + 1)
+    mime = (upload.content_type or "").split(";")[0].strip().lower()
+    if mime in ("", "application/octet-stream"):
+        name = (upload.filename or "").lower()
+        mime = "image/png" if name.endswith(".png") else "image/jpeg"
+    if mime == "image/jpg":
+        mime = "image/jpeg"
+    image = ImageInput(data, mime)
+    voice.check_image(image)
+    return image
 
 
 async def _session_for(

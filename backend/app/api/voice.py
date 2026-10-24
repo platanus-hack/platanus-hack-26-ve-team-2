@@ -45,9 +45,10 @@ from app.voice.errors import (
     VoiceError,
     VoiceUnavailableError,
 )
-from app.voice.ports import AudioInput
+from app.voice.ports import AudioInput, ImageInput
 from app.voice.service import (
     ConversationService,
+    LookEvent,
     ReplyEvent,
     SpeechEvent,
     TranscriptEvent,
@@ -182,11 +183,12 @@ async def collect_turn(
     *,
     audio: AudioInput | None = None,
     text: str = "",
+    image: ImageInput | None = None,
 ) -> TurnOut:
     """Ejecuta un turno completo y agrega sus eventos en una sola respuesta REST."""
     t0 = time.perf_counter()
     transcript, reply, speeches, timings = None, "", [], TurnTimings(t0)
-    async for event in service.run_turn(session, audio=audio, text=text):
+    async for event in service.run_turn(session, audio=audio, text=text, image=image):
         timings.record(event)
         match event:
             case TranscriptEvent():
@@ -220,6 +222,9 @@ class TurnTimings:
                 self.ms["stt"] = event.elapsed_ms
             case ReplyEvent():
                 self.ms["llm"] = event.elapsed_ms
+            case LookEvent():
+                # Cuándo se pidió la captura (lo que siga mide la subida y la visión)
+                self.ms["look"] = self._since_start()
             case SpeechEvent():
                 self.ms.setdefault("first_audio", self._since_start())
                 self.ms["tts"] = self.ms.get("tts", 0) + event.elapsed_ms
@@ -362,6 +367,9 @@ async def ws_turn(ws: WebSocket, service: ConversationService, session: VoiceSes
                 await ws.send_json({"type": "reply", "text": event.text})
             case SpeechEvent():
                 await ws_speech(ws, event)
+            case LookEvent():
+                # La app sube la captura a POST /simulations/{id}/look/{look_id}
+                await ws.send_json({"type": "look", "look_id": event.look_id})
     timings.done()
     log.info("voice ws turn %s/%s %s", session.location_id, session.character_id, timings.ms)
     await ws.send_json({"type": "turn_end", "timings_ms": timings.ms})

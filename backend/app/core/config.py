@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     voice_fallback_max_searches: int = 2
     voice_fallback_timeout_s: float = 15.0
 
+    # --- "¿Qué es esto?": el personaje mira lo que enfoca la cámara (Claude con imagen) ---
+    voice_vision_model: str = "claude-haiku-5-5"
+    voice_vision_max_tokens: int = 180
+    voice_vision_timeout_s: float = 15.0
+    # Cuánto espera el turno la captura que sube la app tras el aviso "look"
+    voice_look_wait_s: float = 8.0
+    voice_max_image_bytes: int = 5 * 1024 * 1024
+
 
 @lru_cache
 def get_settings() -> Settings:

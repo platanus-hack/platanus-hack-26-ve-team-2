@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clientApi } from "@/api";
 import type { ApiError } from "@/api";
-import type { AudioFile, SimulationTurn, SimulationWsMessage, VisemeId } from "@/types/voice";
+import type { AudioFile, ImageFile, SimulationTurn, SimulationWsMessage, VisemeId } from "@/types/voice";
 
 import { useSpeechPlayer } from "./useSpeechPlayer";
 import { useVoiceRecorder } from "./useVoiceRecorder";
@@ -17,12 +17,28 @@ export type LastTurn = Pick<SimulationTurn, "transcript">;
 // Sin ningún mensaje del turno en este tiempo, se da por perdido (STT + primera frase ~2-4 s)
 const TURN_TIMEOUT_MS = 30_000;
 const RECONNECT_DELAY_MS = [500, 1_000, 2_000, 5_000];
+// "¿Qué es esto?": la captura tomada al soltar el botón sirve si el servidor la pide antes de esto
+const FRAME_MAX_AGE_MS = 15_000;
+
+/** Borra una captura local que ya no se va a usar. */
+function deleteFrame(image: ImageFile | null) {
+  try {
+    const file = image && new File(image.uri);
+    if (file?.exists) file.delete();
+  } catch (e) {
+    if (__DEV__) console.warn("[Mirar] no se pudo borrar la captura", e);
+  }
+}
 
 function errorMessage(code: string | undefined, message: string): string {
   return code === "no_speech" ? "No te escuché bien, inténtalo de nuevo." : message;
 }
 
 /**
+ * `captureFrame` toma una captura de lo que enfoca la cámara: si la pregunta es "¿qué es esto?" el
+ * personaje la mira. Se toma al soltar el botón (todavía apunta a lo que preguntó) y solo se sube si
+ * el servidor la pide; si esa no se pudo tomar, se toma otra al llegar el aviso.
+ *
  * Conversación push-to-talk con el personaje de una simulación:
  * presionar → grabar · soltar → enviar audio + simulation_id → reproducir respuesta con lipsync.
  * `onViseme` recibe el visema que suena en cada cambio (para mover la boca sin re-renderizar).
@@ -31,7 +47,11 @@ function errorMessage(code: string | undefined, message: string): string {
  * llega frase por frase, así el personaje empieza a hablar con la primera. Si el WebSocket no está
  * conectado, usa POST /ask (respuesta completa de una vez).
  */
-export function useSimulationConversation(simulationId: string, onViseme?: (viseme: VisemeId) => void) {
+export function useSimulationConversation(
+  simulationId: string,
+  onViseme?: (viseme: VisemeId) => void,
+  captureFrame?: () => Promise<ImageFile | null>,
+) {
   const recorder = useVoiceRecorder();
   const speech = useSpeechPlayer(onViseme);
   const [phase, setPhaseState] = useState<Phase>("idle");
@@ -43,7 +63,58 @@ export function useSimulationConversation(simulationId: string, onViseme?: (vise
   }, []);
   const [lastTurn, setLastTurn] = useState<LastTurn | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // El personaje está mirando la captura (entre el aviso "look" y su respuesta)
+  const [looking, setLooking] = useState(false);
   const sessionId = useRef<string | null>(null);
+
+  const captureRef = useRef(captureFrame);
+  useEffect(() => {
+    captureRef.current = captureFrame;
+  });
+  // Última captura tomada al soltar el botón, a la espera de que el servidor la pida
+  const frame = useRef<{ promise: Promise<ImageFile | null>; at: number } | null>(null);
+
+  const capture = useCallback(
+    (): Promise<ImageFile | null> =>
+      captureRef.current?.().catch((e: unknown) => {
+        if (__DEV__) console.warn("[Mirar] no se pudo tomar la captura", e);
+        return null;
+      }) ?? Promise.resolve(null),
+    [],
+  );
+
+  /** La captura guardada (si sigue fresca), que deja de estar guardada. */
+  const takeStoredFrame = useCallback(async (): Promise<ImageFile | null> => {
+    const stored = frame.current;
+    frame.current = null;
+    if (!stored) return null;
+    const image = await stored.promise;
+    if (Date.now() - stored.at < FRAME_MAX_AGE_MS) return image;
+    deleteFrame(image);
+    return null;
+  }, []);
+
+  const discardStoredFrame = useCallback(() => {
+    void takeStoredFrame().then(deleteFrame);
+  }, [takeStoredFrame]);
+
+  // El servidor pidió la captura: la del momento de la pregunta o, si no hay, una nueva
+  const sendFrame = useCallback(
+    async (lookId: string) => {
+      const image = (await takeStoredFrame()) ?? (await capture());
+      if (__DEV__) console.log("[Mirar] el servidor pidió la captura", lookId, image?.uri ?? "sin captura");
+      // Sin captura el servidor deja de esperarla y el personaje pide que apunte la cámara
+      if (!image) return;
+      try {
+        await clientApi.simulations.look(simulationId, lookId, image);
+      } catch (e) {
+        console.warn("[Mirar] no se pudo subir la captura", e);
+      } finally {
+        deleteFrame(image);
+      }
+    },
+    [capture, simulationId, takeStoredFrame],
+  );
 
   const ws = useRef<WebSocket | null>(null);
   // Turnos enviados por el WebSocket que aún no terminaron. El servidor los responde en orden, así
@@ -77,12 +148,15 @@ export function useSimulationConversation(simulationId: string, onViseme?: (vise
       }
       const stale = staleTurns.current > 0;
       if (msg.type === "turn_end" || msg.type === "error") {
+        setLooking(false);
         pendingTurns.current = Math.max(0, pendingTurns.current - 1);
         if (stale) {
           staleTurns.current -= 1;
           return;
         }
         clearTurnTimer();
+        // No era "¿qué es esto?": la captura del momento de la pregunta ya no hace falta
+        discardStoredFrame();
         if (__DEV__ && msg.type === "turn_end") console.log("[Voz] turno", msg.timings_ms);
         if (msg.type === "error") setError(errorMessage(msg.code, msg.message));
         if (phaseRef.current === "sending") setPhase("idle");
@@ -91,13 +165,17 @@ export function useSimulationConversation(simulationId: string, onViseme?: (vise
       if (stale) return;
       if (msg.type === "transcript") {
         setLastTurn({ transcript: msg.text });
+      } else if (msg.type === "look") {
+        setLooking(true);
+        void sendFrame(msg.look_id);
       } else if (msg.type === "speech") {
+        setLooking(false);
         speech.enqueue(msg);
         // Desde la primera frase la fase es "speaking" (derivada del reproductor)
         if (phaseRef.current === "sending") setPhase("idle");
       }
     },
-    [clearTurnTimer, setPhase, speech],
+    [clearTurnTimer, setPhase, speech, sendFrame, discardStoredFrame],
   );
 
   // El socket vive más que un render: lee siempre el handler actual
@@ -165,8 +243,10 @@ export function useSimulationConversation(simulationId: string, onViseme?: (vise
 
   const askRest = useCallback(
     async (audio: AudioFile) => {
+      // Por REST la captura viaja con la pregunta: el servidor solo la mira si es "¿qué es esto?"
+      const image = await takeStoredFrame();
       try {
-        const turn = await clientApi.simulations.ask(simulationId, audio, sessionId.current);
+        const turn = await clientApi.simulations.ask(simulationId, audio, sessionId.current, image);
         sessionId.current = turn.session_id;
         setLastTurn(turn);
         speech.play(turn.speech);
@@ -174,14 +254,18 @@ export function useSimulationConversation(simulationId: string, onViseme?: (vise
         const apiError = e as ApiError;
         setError(apiError.isConnectionError ? "Sin conexión con el servidor." : errorMessage(apiError.code, apiError.message));
       } finally {
+        deleteFrame(image);
         setPhase("idle");
       }
     },
-    [setPhase, simulationId, speech],
+    [setPhase, simulationId, speech, takeStoredFrame],
   );
 
   const stopTalking = useCallback(async () => {
     if (phaseRef.current !== "recording") return;
+    // La captura, ya: mientras el servidor transcribe el visitante puede mover el teléfono
+    discardStoredFrame();
+    frame.current = { promise: capture(), at: Date.now() };
     let audio;
     try {
       audio = await recorder.stop();
@@ -191,6 +275,7 @@ export function useSimulationConversation(simulationId: string, onViseme?: (vise
       return;
     }
     if (!audio) {
+      discardStoredFrame();
       setPhase("idle");
       setError("Mantén presionado mientras hablas.");
       return;
@@ -218,12 +303,13 @@ export function useSimulationConversation(simulationId: string, onViseme?: (vise
       console.warn("[Voz] no se pudo enviar por WebSocket, se usa /ask", e);
       await askRest(audio);
     }
-  }, [setPhase, recorder, askRest, clearTurnTimer, discardPending]);
+  }, [setPhase, recorder, askRest, clearTurnTimer, discardPending, capture, discardStoredFrame]);
 
   return {
     phase: (speech.playing && phase === "idle" ? "speaking" : phase) as ConversationPhase,
     lastTurn,
     error,
+    looking,
     startTalking,
     stopTalking,
   };

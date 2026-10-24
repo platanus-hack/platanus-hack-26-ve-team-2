@@ -49,6 +49,8 @@ def build_conversation_service(settings: Settings) -> ConversationService:
         _factory(settings.voice_llm_provider, "llm")(settings), _build_researcher(settings)
     )
     tts: TextToSpeech = _factory(settings.voice_tts_provider, "tts")(settings)
+    from app.voice.providers.anthropic.factory import build_vision
+
     sessions = SessionStore(
         ttl_s=settings.voice_session_ttl_s,
         max_sessions=settings.voice_max_sessions,
@@ -65,5 +67,8 @@ def build_conversation_service(settings: Settings) -> ConversationService:
             language=settings.voice_language,
             max_audio_bytes=settings.voice_max_audio_bytes,
             max_text_chars=settings.voice_max_text_chars,
+            max_image_bytes=settings.voice_max_image_bytes,
+            look_wait_s=settings.voice_look_wait_s,
         ),
+        vision=build_vision(settings),
     )

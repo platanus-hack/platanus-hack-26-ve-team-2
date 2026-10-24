@@ -60,6 +60,13 @@ export interface AudioFile {
   type: string;
 }
 
+/** Captura local de lo que enfoca la cámara ("¿qué es esto?"). */
+export interface ImageFile {
+  uri: string;
+  name: string;
+  type: string;
+}
+
 /** Respuesta de POST /simulations/{id}/ask (espejo de backend/app/schemas/simulation.py). */
 export interface SimulationTurn extends Turn {
   /** Envíalo en la próxima pregunta para conservar el hilo de la conversación */
@@ -73,6 +80,8 @@ export interface SimulationTurn extends Turn {
 export type SimulationWsMessage =
   | { type: "session"; session_id: string }
   | { type: "transcript"; text: string }
+  /** "¿Qué es esto?": el servidor espera la captura de la cámara en clientApi.simulations.look */
+  | { type: "look"; look_id: string }
   | ({ type: "speech"; index: number } & Speech)
   | { type: "reply"; text: string }
   | { type: "turn_end"; timings_ms: Record<string, number> }
