@@ -11,11 +11,12 @@ import {
   ViroTrackingStateConstants,
   type ViroAnchor,
   type ViroCameraARHitTest,
+  type ViroCameraTransform,
 } from "@reactvision/react-viro";
 import { useEffect, useRef, useState } from "react";
 
 import { arSession, type ArSessionState, useArSession, type Vec3 } from "@/hooks/useArSession";
-import type { SceneObject } from "@/types/simulation";
+import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
 
 // El piso está al menos así de abajo del teléfono
 const MIN_FLOOR_DROP = 0.6;
@@ -42,6 +43,23 @@ const MAX_PLACE_DISTANCE = 6;
 // Solo el anillo flota apenas sobre el piso (el personaje no): a ras del piso el ruido del mapa de
 // profundidad hacía que la oclusión lo tapara a pedazos
 const RETICLE_LIFT = 0.04;
+// El anfitrión camina hacia el usuario si se aleja más de FOLLOW_START (m) y se detiene al quedar a
+// FOLLOW_STOP; la diferencia evita que arranque y frene a cada paso
+const FOLLOW_START = 2.2;
+const FOLLOW_STOP = 1.3;
+// m/s, al ritmo de los pasos de la animación "caminar"
+const WALK_SPEED = 1.1;
+// Se gira hacia el usuario cuando quedó a más de TURN_START grados y para al quedar a TURN_STOP:
+// así no tiembla con el pulso del teléfono
+const TURN_START = 15;
+const TURN_STOP = 2;
+// grados/s
+const TURN_SPEED = 120;
+// Más cerca que esto la dirección al usuario es inestable: no se gira
+const MIN_LOOK_DISTANCE = 0.3;
+// Foco y sombra van sobre el anfitrión (en el marco de la colocación) y lo acompañan al caminar
+const LIGHT_OFFSET: Vec3 = [0.6, 4, 1.2];
+const DEG = Math.PI / 180;
 
 ViroMaterials.createMaterials({
   reticle: { lightingModel: "Constant", diffuseColor: "#E66F3DEE", cullMode: "None" },
@@ -64,6 +82,20 @@ type SceneProps = {
   arSceneNavigator?: { isDepthOcclusionSupported?: () => Promise<{ supported: boolean }> };
 };
 
+/** Pose del anfitrión sobre el piso, relativa al nodo de colocación; la mueve el bucle de seguimiento. */
+type HostPose = { placementId: number; x: number; z: number; yaw: number; turning: boolean; walking: boolean };
+
+function initialPose(placementId: number, host: SceneObject): HostPose {
+  const [x, , z] = host.transform.position;
+  return { placementId, x, z, yaw: host.transform.rotation[1], turning: false, walking: false };
+}
+
+/** Ángulo equivalente en (-180, 180] */
+function wrapDegrees(a: number): number {
+  const r = ((a % 360) + 360) % 360;
+  return r > 180 ? r - 360 : r;
+}
+
 export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
   const placement = useArSession((s) => s.placement);
   const floor = useArSession((s) => s.floor);
@@ -71,7 +103,10 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
   const mouth = useArSession((s) => s.mouth);
   const objects = useArSession((s) => s.objects);
   // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
-  const hostId = objects.find((o) => o.kind === "dynamic")?.id;
+  const host = objects.find((o): o is DynamicSceneObject => o.kind === "dynamic");
+  const hostId = host?.id;
+  // Si llega caminando, su entrada ya define dónde queda: ese no sigue al usuario
+  const movableHost = host && !host.entrance ? host : undefined;
   const tracking = useArSession((s) => s.tracking);
   const lastUpdate = useRef(0);
   const lastHitLog = useRef(0);
@@ -80,6 +115,14 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
   // Altura del último plano real que tocó el centro de la pantalla: es el piso que el usuario está viendo
   const aimLevel = useRef<number | null>(null);
   const trackingLostTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hostPose = useRef<HostPose | null>(null);
+  // Copia de la pose cada vez que se queda quieto: es la que va en las props de React
+  const [settledPose, setSettledPose] = useState<HostPose | null>(null);
+  const hostMoving = useRef(false);
+  const lastFrameAt = useRef(0);
+  const hostNode = useRef<ViroNode>(null);
+  const spotLight = useRef<ViroSpotLight>(null);
+  const shadow = useRef<ViroQuad>(null);
 
   useEffect(() => () => {
     if (trackingLostTimer.current) clearTimeout(trackingLostTimer.current);
@@ -197,6 +240,75 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
     }
   }
 
+  function applyPose({ x, z, yaw }: HostPose) {
+    hostNode.current?.setNativeProps({ position: [x, 0, z], rotation: [0, yaw, 0] });
+    shadow.current?.setNativeProps({ position: [x, 0, z] });
+    spotLight.current?.setNativeProps({ position: [x + LIGHT_OFFSET[0], LIGHT_OFFSET[1], z + LIGHT_OFFSET[2]] });
+  }
+
+  // Cada frame: el anfitrión se gira para mirar al usuario y, si el modo seguir está activo, camina
+  // hacia él cuando se aleja. La pose va directo al nodo nativo (setNativeProps) para no
+  // re-renderizar React en cada frame
+  function onCameraTransformUpdate({ position }: ViroCameraTransform) {
+    const now = Date.now();
+    const dt = Math.min(0.1, (now - lastFrameAt.current) / 1000);
+    lastFrameAt.current = now;
+    const { placement, tracking, follow, objects } = arSession.get();
+    const current = objects.find((o) => o.kind === "dynamic");
+    // Sin rastreo la pose de la cámara no es confiable
+    if (!placement || !tracking || !current || current.entrance) return;
+    if (hostPose.current?.placementId !== placement.id) hostPose.current = initialPose(placement.id, current);
+    const pose = hostPose.current;
+
+    // Cámara en el marco del nodo de colocación (trasladado a `point` y girado `yaw` en Y)
+    const t = placement.yaw * DEG;
+    const wx = position[0] - placement.point[0];
+    const wz = position[2] - placement.point[2];
+    const dx = wx * Math.cos(t) - wz * Math.sin(t) - pose.x;
+    const dz = wx * Math.sin(t) + wz * Math.cos(t) - pose.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance < MIN_LOOK_DISTANCE) return;
+
+    // También camina mientras habla: entonces solo mueve la boca, sin gesticular
+    const walking = follow && distance > (pose.walking ? FOLLOW_STOP : FOLLOW_START);
+    if (walking !== pose.walking) {
+      pose.walking = walking;
+      if (__DEV__) console.log("[AR] follow", JSON.stringify({ walking, distance: distance.toFixed(2) }));
+      arSession.walk(walking);
+    }
+
+    let moved = false;
+    if (walking) {
+      const step = Math.min(WALK_SPEED * dt, distance - FOLLOW_STOP);
+      pose.x += (dx / distance) * step;
+      pose.z += (dz / distance) * step;
+      moved = true;
+    }
+
+    // El modelo mira hacia +Z: yaw = atan2(dx, dz). Caminando siempre se orienta hacia donde avanza
+    const diff = wrapDegrees(Math.atan2(dx, dz) / DEG - pose.yaw);
+    if (Math.abs(diff) > TURN_START) pose.turning = true;
+    else if (Math.abs(diff) < TURN_STOP) pose.turning = false;
+    if (pose.turning || walking) {
+      const turn = Math.sign(diff) * Math.min(Math.abs(diff), TURN_SPEED * dt);
+      pose.yaw = wrapDegrees(pose.yaw + turn);
+      moved ||= turn !== 0;
+    }
+    if (moved) applyPose(pose);
+    else if (hostMoving.current) setSettledPose({ ...pose });
+    hostMoving.current = moved;
+  }
+
+  // Mientras se mueve las props no cambian (React no pisa lo que puso setNativeProps); al quedarse
+  // quieto se actualizan con la pose final para que un nuevo render no lo devuelva a donde se colocó
+  const pose =
+    placement && movableHost
+      ? settledPose?.placementId === placement.id
+        ? settledPose
+        : initialPose(placement.id, movableHost)
+      : null;
+  const shadowAt: Vec3 = pose ? [pose.x, 0, pose.z] : [0, 0, 0];
+
   return (
     <ViroARScene
       anchorDetectionTypes={["PlanesHorizontal"]}
@@ -205,6 +317,7 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
       onAnchorFound={onPlane}
       onAnchorUpdated={onPlane}
       onAnchorRemoved={onPlaneRemoved}
+      onCameraTransformUpdate={onCameraTransformUpdate}
     >
       <ViroAmbientLight color="#ffffff" intensity={350} />
 
@@ -229,7 +342,8 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
           visible={tracking}
         >
           <ViroSpotLight
-            position={[0.6, 4, 1.2]}
+            ref={spotLight}
+            position={[shadowAt[0] + LIGHT_OFFSET[0], LIGHT_OFFSET[1], shadowAt[2] + LIGHT_OFFSET[2]]}
             direction={[-0.15, -1, -0.3]}
             innerAngle={10}
             outerAngle={30}
@@ -242,11 +356,18 @@ export function VistaARScene({ arSceneNavigator }: SceneProps = {}) {
             shadowNearZ={2}
             shadowFarZ={7}
           />
-          {objects.map((obj) => (
-            <SceneModel key={obj.id} obj={obj} isHost={obj.id === hostId} hostAnimation={animation} mouth={mouth} />
-          ))}
+          {objects.map((obj) =>
+            pose && movableHost && obj.id === movableHost.id ? (
+              // El nodo lleva la pose que mueve el seguimiento; el modelo queda en su origen
+              <ViroNode key={obj.id} ref={hostNode} position={[pose.x, 0, pose.z]} rotation={[0, pose.yaw, 0]}>
+                <SceneModel obj={atOrigin(movableHost)} isHost hostAnimation={animation} mouth={mouth} />
+              </ViroNode>
+            ) : (
+              <SceneModel key={obj.id} obj={obj} isHost={obj.id === hostId} hostAnimation={animation} mouth={mouth} />
+            ),
+          )}
           {/* Sombra sobre el piso real para que el personaje no se vea flotando */}
-          <ViroQuad rotation={[-90, 0, 0]} width={3} height={3} arShadowReceiver />
+          <ViroQuad ref={shadow} position={shadowAt} rotation={[-90, 0, 0]} width={3} height={3} arShadowReceiver />
         </ViroNode>
       )}
     </ViroARScene>
@@ -319,6 +440,15 @@ function SceneModel({ obj, isHost, hostAnimation, mouth }: SceneModelProps) {
       />
     </ViroNode>
   );
+}
+
+/** El mismo objeto sin posición en el piso ni giro en Y: los pone el nodo que lo contiene. */
+function atOrigin(obj: DynamicSceneObject): DynamicSceneObject {
+  const [rx, , rz] = obj.transform.rotation;
+  return {
+    ...obj,
+    transform: { ...obj.transform, position: [0, obj.transform.position[1], 0], rotation: [rx, 0, rz] },
+  };
 }
 
 const registeredEntrances = new Set<string>();

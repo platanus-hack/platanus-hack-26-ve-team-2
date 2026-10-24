@@ -11,7 +11,7 @@ import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
  * Los modelos van en .glb sin compresión Draco (Viro no la soporta).
  *
  * El primer objeto "dynamic" es el anfitrión: saluda al aparecer y al tocarlo.
- * Sus animaciones se llaman "saludo", "hablando" y "caminar" ("caminar" todavía no se usa), y para el
+ * Sus animaciones se llaman "saludo", "hablando" y "caminar" (cuando sigue al usuario), y para el
  * lipsync tiene la shape key "boca_abierta" (la boca la agrega scripts/add-mouth.py con Blender).
  * Si al cambiar de simulación el anfitrión es el mismo, se queda donde estaba.
  */

@@ -15,6 +15,7 @@ import { requestStartupPermissions } from "@/hooks/useStartupPermissions";
 import { useSimulationConversation } from "@/hooks/useSimulationConversation";
 import { useStartSimulation } from "@/hooks/useStartSimulation";
 import { colors, fonts } from "@/theme";
+import { followCommand } from "@/utils/followCommands";
 import { mouthOpenness } from "@/utils/lipsync";
 
 type CameraPermission = "pending" | "granted" | "denied";
@@ -90,6 +91,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const placed = useArSession((s) => s.placement !== null);
   const modelStatus = useArSession((s) => s.modelStatus);
   const occlusion = useArSession((s) => s.occlusion);
+  const follow = useArSession((s) => s.follow);
   const depthSupported = occlusion === "supported";
 
   const { region } = active;
@@ -128,6 +130,12 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   useEffect(() => {
     if (speaking) arSession.set({ mouth: mouthOpenness(viseme) });
   }, [speaking, viseme]);
+
+  // "Sígueme" / "quédate aquí" en la conversación activan o desactivan el modo seguir
+  useEffect(() => {
+    const command = followCommand(lastTurn?.transcript);
+    if (command !== null) arSession.setFollow(command);
+  }, [lastTurn]);
 
   async function switchSimulation(simulationId: string) {
     setScenesOpen(false);
@@ -251,7 +259,15 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
 
             {mic.status === "granted" ? (
               <View style={styles.talkRow}>
-                <View style={styles.side} />
+                <View style={styles.side}>
+                  <CircleButton
+                    label={follow ? "Dejar de seguirme" : "Seguirme"}
+                    variant={follow ? "solid" : "glass"}
+                    onPress={() => arSession.setFollow(!follow)}
+                  >
+                    <Icon name="walk" color={follow ? colors.ink : "white"} />
+                  </CircleButton>
+                </View>
                 <PushToTalkButton
                   phase={phase}
                   onPressIn={conversation.startTalking}
