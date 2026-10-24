@@ -1,6 +1,8 @@
-import bolivarModel from "@/assets/models/bolivar.glb";
-import monteverdeModel from "@/assets/models/domingo-montereal-v3.glb";
-import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
+import bolivarModel from "@/assets/models/bolivar-batalla.glb";
+import monteverdeModel from "@/assets/models/monteverde-batalla.glb";
+import type { Choreography, DynamicSceneObject, SceneObject } from "@/types/simulation";
+
+import { battleChoreography } from "./battle";
 
 /**
  * Objetos 3D de cada simulación, guardados en el teléfono e indexados por el
@@ -14,6 +16,9 @@ import type { DynamicSceneObject, SceneObject } from "@/types/simulation";
  * Sus animaciones se llaman "saludo", "hablando" y "caminar" (cuando sigue al usuario), y para el
  * lipsync tiene la shape key "boca_abierta" (la boca la agrega scripts/add-mouth.py con Blender).
  * Si al cambiar de simulación el anfitrión es el mismo, se queda donde estaba.
+ *
+ * Los *-batalla.glb salen de scripts/battle/build_battle.py: los modelos originales más un sable y
+ * la animación "batalla" (en las demás animaciones el sable va escondido).
  */
 const bolivar: DynamicSceneObject = {
   id: "guia",
@@ -24,27 +29,30 @@ const bolivar: DynamicSceneObject = {
   transform: { position: [0, 0.01, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
 };
 
-// Distancia entre ambos en la batalla
-const DUEL_GAP = 1.2;
-
 const SIMULATION_OBJECTS: Record<string, SceneObject[]> = {
   carabobo_prueba: [bolivar],
+  // Los dos en el mismo origen (donde está Bolívar): la animación "batalla" ya trae dónde va cada
+  // uno, incluida la carrera de Monteverde desde 7 m a la derecha
   batalla: [
-    // Gira para mirar hacia donde llega Monteverde (+X); el modelo mira hacia +Z
-    { ...bolivar, transform: { ...bolivar.transform, rotation: [0, 90, 0] } },
+    bolivar,
     {
       id: "monteverde",
       name: "Domingo de Monteverde",
       kind: "dynamic",
       model: monteverdeModel,
-      // Como Bolívar: pies en y = 0 (mide 1,7 m), +1 cm para que la oclusión no corte las suelas.
-      // Mira hacia -X, de frente a Bolívar, y llega caminando
-      transform: { position: [DUEL_GAP, 0.01, 0], rotation: [0, -90, 0], scale: [1, 1, 1] },
-      entrance: { from: [DUEL_GAP + 3, 0, 0], durationMs: 3500, walkAnimation: "caminar" },
+      transform: { position: [0, 0.01, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     },
   ],
 };
 
+const SIMULATION_CHOREOGRAPHY: Record<string, Choreography> = {
+  batalla: battleChoreography,
+};
+
 export function getSimulationObjects(simulationId: string): SceneObject[] | undefined {
   return SIMULATION_OBJECTS[simulationId];
+}
+
+export function getSimulationChoreography(simulationId: string): Choreography | undefined {
+  return SIMULATION_CHOREOGRAPHY[simulationId];
 }

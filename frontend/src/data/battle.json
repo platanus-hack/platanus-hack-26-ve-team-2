@@ -1,0 +1,62 @@
+{
+  "animation": "batalla",
+  "durationMs": 14000,
+  "cues": [
+    {
+      "atMs": 0,
+      "sound": "run_in"
+    },
+    {
+      "atMs": 900,
+      "sound": "draw"
+    },
+    {
+      "atMs": 1750,
+      "sound": "draw"
+    },
+    {
+      "atMs": 2450,
+      "sound": "cry"
+    },
+    {
+      "atMs": 3000,
+      "sound": "clash_heavy"
+    },
+    {
+      "atMs": 3550,
+      "sound": "clash"
+    },
+    {
+      "atMs": 4150,
+      "sound": "clash_2"
+    },
+    {
+      "atMs": 4750,
+      "sound": "clash"
+    },
+    {
+      "atMs": 5000,
+      "sound": "clash_heavy"
+    },
+    {
+      "atMs": 5750,
+      "sound": "push"
+    },
+    {
+      "atMs": 7000,
+      "sound": "clash_heavy"
+    },
+    {
+      "atMs": 7300,
+      "sound": "push"
+    },
+    {
+      "atMs": 8119,
+      "sound": "fall"
+    },
+    {
+      "atMs": 11250,
+      "sound": "run_away"
+    }
+  ]
+}

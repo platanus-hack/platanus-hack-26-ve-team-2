@@ -15,7 +15,8 @@ export type IconName =
   | "nav"
   | "chevron"
   | "sound"
-  | "mic";
+  | "mic"
+  | "replay";
 
 const paths: Record<IconName, ReactNode> = {
   search: (
@@ -64,6 +65,12 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <Path d="M11 5 6 9H3v6h3l5 4V5Z" />
       <Path d="M15 9a4 4 0 0 1 0 6m3-9a8 8 0 0 1 0 12" />
+    </>
+  ),
+  replay: (
+    <>
+      <Path d="M4 12a8 8 0 1 0 2.3-5.7" />
+      <Path d="M4 4v4.5h4.5" />
     </>
   ),
 };

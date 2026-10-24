@@ -7,9 +7,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CameraShade, MicPermissionPrompt, PushToTalkButton, SimulationsSheet } from "@/components/ar";
 import { VistaARScene } from "@/components/ar/VistaARScene";
-import { CircleButton, Icon, StatusRow } from "@/components/common";
+import { CircleButton, Icon, PrimaryButton, PrimaryLabel, StatusRow } from "@/components/common";
 import { type ActiveSimulation, useActiveSimulation } from "@/contexts/ActiveSimulationContext";
 import { arSession, useArSession } from "@/hooks/useArSession";
+import { useBattleDirector } from "@/hooks/useBattleDirector";
 import { useMicrophonePermission } from "@/hooks/useMicrophonePermission";
 import { requestStartupPermissions } from "@/hooks/useStartupPermissions";
 import { useSimulationConversation } from "@/hooks/useSimulationConversation";
@@ -94,6 +95,9 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const placed = useArSession((s) => s.placement !== null);
   const modelStatus = useArSession((s) => s.modelStatus);
   const follow = useArSession((s) => s.follow);
+  const battle = useArSession((s) => s.battle);
+  // Efectos de sonido y final de la coreografía (la batalla), si la simulación tiene
+  useBattleDirector(active.choreography);
 
   const { region } = active;
   const current = region.simulations.find((s) => s.id === active.simulationId);
@@ -115,8 +119,8 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
 
   // Otra simulación = otros objetos: se vuelven a colocar en el piso
   useEffect(() => {
-    arSession.loadObjects(active.objects);
-  }, [active.objects]);
+    arSession.loadObjects(active.objects, active.choreography ?? null);
+  }, [active.objects, active.choreography]);
 
   // Mientras habla, gesticula
   const speaking = phase === "speaking";
@@ -164,8 +168,12 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     if (modelStatus !== "ready") return "Cargando el personaje…";
     // Al pasar el teléfono a otra persona ARCore puede perder el rastreo un momento
     if (!tracking) return "Recuperando el rastreo, mueve el teléfono despacio";
+    if (battle === "waiting") return "Preparando la batalla…";
+    if (battle === "playing") return "¡Monteverde ataca! Mira la batalla";
+    if (battle === "finished") return "¡Fin de la batalla!";
     return null;
   })();
+  const inBattle = battle !== "off";
 
   return (
     <View style={styles.container}>
@@ -214,6 +222,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
             </View>
           )
         ) : (
+          !inBattle &&
           (lastTurn || phase === "sending") && (
             <View style={styles.speech}>
               <Text style={styles.speechName}>{lastTurn?.character_name ?? "…"}</Text>
@@ -257,7 +266,25 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
               </Text>
             </View>
 
-            {mic.status === "granted" ? (
+            {inBattle ? (
+              // En la batalla no se conversa: al terminar se puede repetir o elegir otra simulación
+              <View style={styles.talkRow}>
+                <View style={styles.side} />
+                {battle === "finished" ? (
+                  <PrimaryButton onPress={() => arSession.replayBattle()} style={styles.replay}>
+                    <Icon name="replay" color="white" />
+                    <PrimaryLabel>Repetir batalla</PrimaryLabel>
+                  </PrimaryButton>
+                ) : (
+                  <View />
+                )}
+                <View style={styles.side}>
+                  <CircleButton label="Ver simulaciones disponibles" variant="glass" onPress={() => setScenesOpen(true)}>
+                    <Icon name="layers" color="white" />
+                  </CircleButton>
+                </View>
+              </View>
+            ) : mic.status === "granted" ? (
               <View style={styles.talkRow}>
                 <View style={styles.side}>
                   <CircleButton
@@ -375,4 +402,5 @@ const styles = StyleSheet.create({
   error: { color: "#f4b47f" },
   talkRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
   side: { width: 44, marginTop: 20 },
+  replay: { marginTop: 16 },
 });
