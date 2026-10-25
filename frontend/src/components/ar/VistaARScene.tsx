@@ -118,6 +118,10 @@ const MIN_FIELD_AIM = 0.2;
 const FIELD_SHADOW: [number, number] = [22, 8];
 // Lo que dura el fogonazo de un disparo
 const FLASH_MS = 90;
+// Una sola bocanada de humo al disparar. El nativo de Viro (Android e iOS) espera una lista de ráfagas,
+// aunque sus tipos de TypeScript digan un objeto: con el objeto suelto la app se cae
+type SmokeBurst = NonNullable<NonNullable<ComponentProps<typeof ViroParticleEmitter>["spawnBehavior"]>["emissionBurst"]>;
+const SMOKE_BURST = [{ time: 0, min: 12, max: 16, cycles: 1 }] as unknown as SmokeBurst;
 
 ViroMaterials.createMaterials({
   reticle: { lightingModel: "Constant", diffuseColor: "#E66F3DEE", cullMode: "None" },
@@ -940,7 +944,7 @@ function FieldShotEffect({ shot, source }: { shot: FieldShot; source?: number })
           image={{ source: smoke, height: 0.4, width: 0.4, bloomThreshold: 1 }}
           spawnBehavior={{
             emissionRatePerSecond: [0, 0],
-            emissionBurst: { time: 0, min: 12, max: 16, cycles: 1 },
+            emissionBurst: SMOKE_BURST,
             particleLifetime: [1800, 2600],
             maxParticles: 24,
             spawnVolume: { shape: "sphere", params: [0.12] },
