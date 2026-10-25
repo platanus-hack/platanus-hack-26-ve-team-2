@@ -188,6 +188,18 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     arSession.talk(speaking);
   }, [speaking]);
 
+  // El presentador lanzó una escena que pidió el visitante: se abre cuando termina de presentarla
+  const { action, takeAction } = conversation;
+  useEffect(() => {
+    if (!action || phase !== "idle") return;
+    const ready = takeAction();
+    if (ready?.type === "start_simulation" && region.simulations.some((s) => s.id === ready.simulation_id)) {
+      void switchSimulation(ready.simulation_id);
+    }
+    // switchSimulation es una función del render: se usa la del momento en que la acción quedó lista
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [action, phase]);
+
   // "Sígueme" / "quédate aquí" en la conversación activan o desactivan el modo seguir
   useEffect(() => {
     const command = followCommand(lastTurn?.transcript);

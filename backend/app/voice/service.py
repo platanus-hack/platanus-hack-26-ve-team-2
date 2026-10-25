@@ -7,10 +7,15 @@ personaje empieza a hablar con la primera frase, no al final de la respuesta.
 
 Si la pregunta es por algo que el visitante está enfocando ("¿qué es esto?", app/voice/look.py),
 el turno pide la captura (`LookEvent`), la espera y responde mirándola con el modelo de visión.
+
+Acciones: el LLM puede empezar su respuesta con una etiqueta `[NOMBRE:valor]` (p. ej.
+`[ESCENA:batalla]`, que el presentador usa para lanzar una escena). La etiqueta no se habla: sale
+como `ActionEvent` antes del audio y quien expone el turno decide si es válida y qué hace con ella.
 """
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass, field, replace
@@ -66,7 +71,20 @@ class LookEvent:
     look_id: str
 
 
-TurnEvent = TranscriptEvent | LookEvent | ReplyEvent | SpeechEvent
+@dataclass(frozen=True, slots=True)
+class ActionEvent:
+    """Etiqueta `[NOMBRE:valor]` con la que el LLM empezó su respuesta (no se habla)."""
+
+    name: str
+    value: str
+
+
+TurnEvent = TranscriptEvent | LookEvent | ActionEvent | ReplyEvent | SpeechEvent
+
+# `[ESCENA:batalla]`: nombre en mayúsculas y valor tipo slug, como los ids del catálogo
+_ACTION_TAG = re.compile(r"\[([A-Z]{2,32}):([a-z0-9_]{1,64})\]")
+# Más que esto sin cerrar la etiqueta ya no es una etiqueta: se habla tal cual
+_ACTION_TAG_MAX = 100
 
 # Sin captura (no llegó a tiempo) o sin modelo de visión no hay qué mirar
 NO_IMAGE_REPLY = (
@@ -76,6 +94,8 @@ NO_IMAGE_REPLY = (
 VISION_FAILED_REPLY = (
     "No logro distinguirlo bien, amigo. Enfoca de nuevo el objeto o el lugar y pregúntame otra vez."
 )
+# El LLM respondió solo la etiqueta de la acción, sin nada que decir
+ACTION_ONLY_REPLY = "Mira con atención, amigo."
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +232,9 @@ class ConversationService:
                     else _once(NO_IMAGE_REPLY)
                 )
             assert chunks is not None
+            action, chunks = await _extract_action(chunks)
+            if action is not None:
+                yield action
 
             splitter = SentenceSplitter()
             sentences: list[str] = []
@@ -233,6 +256,8 @@ class ConversationService:
                         yield pending[emitted].result()
                         emitted += 1
                 speak(splitter.flush())
+                if not sentences and action is not None:
+                    speak(ACTION_ONLY_REPLY)
                 llm_ms = _ms(t)
                 if not sentences:
                     raise ProviderError("llm")
@@ -355,3 +380,34 @@ async def _detect_marker(
             yield chunk
 
     return False, rest()
+
+
+async def _extract_action(
+    stream: AsyncIterator[str],
+) -> tuple[ActionEvent | None, AsyncIterator[str]]:
+    """Si el stream empieza con una etiqueta `[NOMBRE:valor]`, la separa: devuelve la acción y el
+    stream sin ella. Solo retiene el inicio mientras todavía puede ser una etiqueta."""
+    held = ""
+    action: ActionEvent | None = None
+    exhausted = True
+    async for chunk in stream:
+        held += chunk
+        start = held.lstrip()
+        if not start:
+            continue
+        if match := _ACTION_TAG.match(start):
+            action = ActionEvent(match[1], match[2])
+            held = start[match.end() :]
+        elif start.startswith("[") and "]" not in start and len(start) < _ACTION_TAG_MAX:
+            continue  # puede ser una etiqueta a medio llegar
+        exhausted = False
+        break
+
+    async def rest() -> AsyncIterator[str]:
+        if held.strip():
+            yield held
+        if not exhausted:
+            async for chunk in stream:
+                yield chunk
+
+    return action, rest()

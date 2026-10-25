@@ -50,7 +50,7 @@ personaje y se los pasa al servicio de voz (el prompt reemplaza el `context` de 
 Si `session_id` falta, expiró o es de otra simulación, se abre una sesión nueva sin error.
 
 Por ahora el catálogo está hardcodeado en `app/simulations/catalog.py` (región `cubo_negro`: círculo
-de 75 m en Chuao, con la simulación `carabobo_prueba`). Arquitectura (`app/simulations/`): `domain.py`
+de 75 m en Chuao, con las simulaciones `bolivar_general`, `batalla` y `trincheras`). Arquitectura (`app/simulations/`): `domain.py`
 (Region, Simulation), `repository.py` (puerto `RegionRepository` + implementación en memoria) y
 `service.py` (casos de uso). Para pasar a PostGIS basta otra implementación del repositorio.
 

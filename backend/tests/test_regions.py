@@ -20,7 +20,6 @@ def test_list_regions_returns_cubo_negro_as_geojson():
     # Primero la conversación general con el presentador; después las escenas
     assert [(s["id"], s["kind"], s["space"]) for s in region["simulations"]] == [
         ("bolivar_general", "general", "compact"),
-        ("carabobo_prueba", "scene", "compact"),
         ("batalla", "scene", "compact"),
         ("trincheras", "scene", "open"),
     ]
@@ -38,10 +37,8 @@ def test_start_without_body_opens_the_general_conversation():
 
 
 def test_start_specific_simulation():
-    res = client.post(
-        "/regions/cubo_negro/simulations/start", json={"simulation_id": "carabobo_prueba"}
-    )
-    assert res.json()["simulation_id"] == "carabobo_prueba"
+    res = client.post("/regions/cubo_negro/simulations/start", json={"simulation_id": "batalla"})
+    assert res.json()["simulation_id"] == "batalla"
 
 
 def test_start_unknown_region_or_simulation_is_404():

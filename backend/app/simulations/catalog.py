@@ -1,22 +1,16 @@
 """Catálogo hardcodeado mientras las regiones no viven en la base de datos."""
 
-from app.simulations.domain import Region, Simulation
+from app.simulations.domain import SCENE_ACTION, Region, Simulation
 from app.simulations.geometry import circle_ring
 
-CARABOBO_PROMPT = """\
-Estás en el Campo de Carabobo, Venezuela, lugar de la Batalla de Carabobo del 24 de junio de 1821,
-que selló la independencia de Venezuela. El ejército patriota al mando de Simón Bolívar venció a
-las tropas realistas de Miguel de la Torre. Destacaron José Antonio Páez y sus llaneros y la
-Legión Británica; cayeron los generales Manuel Cedeño y Ambrosio Plaza. La escena recrea las
-posiciones de las tropas en la sabana.
-"""
-
 BATALLA_PROMPT = """\
-Es 1813, en plena Campaña Admirable. Simón Bolívar avanza desde los Andes hacia Caracas y queda
-frente a frente con Domingo de Monteverde, el capitán canario que en 1812 derrotó a la Primera
-República y gobierna Venezuela para el rey. Bolívar lo vence en Los Taguanes, entra en Caracas el
-6 de agosto de 1813 y obliga a Monteverde a encerrarse en Puerto Cabello. En la escena ambos
-jefes se encuentran cara a cara antes del combate.
+Es julio de 1812, en Puerto Cabello. El coronel Simón Bolívar comanda la plaza y el Castillo de San
+Felipe, donde la Primera República guarda su arsenal y a los presos realistas. El 30 de junio el
+oficial Francisco Fernández Vinoni se subleva, libera a los presos y toma el castillo, que vuelve
+sus cañones contra la ciudad. Bolívar resiste varios días con muy poca tropa, pero el 6 de julio
+pierde la plaza y se embarca hacia La Guaira; las fuerzas de Domingo de Monteverde, el capitán
+canario que avanza para el rey, se quedan con Puerto Cabello. Poco después cae la Primera
+República. En la escena Monteverde y Bolívar se enfrentan cara a cara por el castillo.
 """
 
 TRINCHERAS_PROMPT = """\
@@ -30,14 +24,23 @@ En la escena el visitante está entre las dos trincheras, una a cada lado.
 
 
 def presenter_prompt(scenes: tuple[Simulation, ...]) -> str:
-    """Contexto de la conversación general: Bolívar recibe al visitante y le ofrece las escenas."""
-    titles = ", ".join(f"«{s.title}»" for s in scenes)
+    """Contexto de la conversación general: Bolívar recibe al visitante, le ofrece las escenas y
+    las lanza él mismo si se las pide (la app abre la escena al terminar de hablar)."""
+    listing = "\n".join(f"- {s.id}: «{s.title}». {s.description}" for s in scenes)
+    example = scenes[0].id if scenes else "id"
     return f"""\
 Recibes al visitante como anfitrión de esta experiencia de realidad aumentada sobre la historia de
-Venezuela y conversas con él sobre tu vida, tus ideas, tu tiempo y lo que vino después. Si quiere
-vivir una escena concreta, puede tocar el botón de simulaciones de la pantalla y elegir una:
-{titles}.
-Invítalo a hacerlo cuando venga al caso, sin repetirlo en cada respuesta.
+Venezuela y conversas con él sobre tu vida, tus ideas, tu tiempo y lo que vino después. Puedes
+mostrarle estas escenas (id: título y de qué trata):
+{listing}
+Si el visitante pide ver, vivir o que le cuentes uno de esos episodios, aunque lo diga con otras
+palabras ("háblame de la pérdida del castillo", "quiero ver lo de las trincheras"), empieza tu
+respuesta con la etiqueta de esa escena, por ejemplo [{SCENE_ACTION}:{example}], y sigue con una
+presentación breve, de una o dos frases, que termine invitándolo a mirar: la escena empieza sola
+cuando terminas de hablar. Usa la etiqueta solo si lo que pide coincide claramente con una escena y
+nunca inventes un id; si no, responde normalmente, sin etiqueta. También puede elegirlas con el
+botón de simulaciones de la pantalla: invítalo cuando venga al caso, sin repetirlo en cada
+respuesta.
 """
 
 
@@ -47,17 +50,9 @@ CUBO_NEGRO_CENTER = (-66.8533115, 10.4842436)
 
 CUBO_NEGRO_SCENES = (
     Simulation(
-        id="carabobo_prueba",
-        title="La Batalla de Carabobo",
-        description="Simulación de prueba: Bolívar y Manuela Sáenz te cuentan la batalla.",
-        prompt=CARABOBO_PROMPT,
-        voice_location_id="campo_carabobo",
-        character_id="bolivar",
-    ),
-    Simulation(
         id="batalla",
-        title="Batalla",
-        description="Domingo de Monteverde llega a enfrentarse cara a cara con Bolívar.",
+        title="Pérdida del Castillo de San Felipe",
+        description="Monteverde llega a arrebatarle a Bolívar el castillo de Puerto Cabello.",
         prompt=BATALLA_PROMPT,
         voice_location_id="campana_admirable",
         character_id="bolivar",

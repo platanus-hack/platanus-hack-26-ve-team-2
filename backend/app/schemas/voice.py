@@ -1,5 +1,5 @@
 import base64
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -75,6 +75,10 @@ class TurnOut(BaseModel):
     reply_text: str
     speech: SpeechOut
     timings_ms: dict[str, int]
+    action: dict[str, Any] | None = Field(
+        default=None,
+        description="Lo que la app debe hacer al terminar de hablar el personaje (null: nada)",
+    )
 
 
 # ---------- WebSocket: mensajes del cliente ----------

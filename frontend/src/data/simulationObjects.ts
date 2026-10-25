@@ -69,7 +69,6 @@ const SIMULATION_OBJECTS: Record<string, SceneObject[]> = {
   // Conversación general: Bolívar como presentador. Es el mismo anfitrión que en las escenas, así
   // que al elegir una escena se queda donde está
   bolivar_general: [bolivar],
-  carabobo_prueba: [bolivar],
   // Los dos en el mismo origen (donde está Bolívar): la animación "batalla" ya trae dónde va cada
   // uno, incluida la carrera de Monteverde desde 7 m a la derecha
   batalla: [

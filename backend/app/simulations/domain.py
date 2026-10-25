@@ -11,6 +11,9 @@ from typing import Literal
 # GeoJSON: cada posición es (lng, lat); el primer anillo es el borde exterior y va cerrado.
 Ring = tuple[tuple[float, float], ...]
 
+# Etiqueta con la que el presentador lanza una escena desde la conversación: `[ESCENA:<id>]`
+SCENE_ACTION = "ESCENA"
+
 
 @dataclass(frozen=True, slots=True)
 class Simulation:
@@ -47,6 +50,11 @@ class Region:
 
     def simulation(self, simulation_id: str) -> Simulation | None:
         return next((s for s in self.simulations if s.id == simulation_id), None)
+
+    @property
+    def scenes(self) -> tuple[Simulation, ...]:
+        """Las escenas que el presentador (la conversación general) puede lanzar."""
+        return tuple(s for s in self.simulations if s.kind == "scene")
 
     @property
     def center(self) -> tuple[float, float]:

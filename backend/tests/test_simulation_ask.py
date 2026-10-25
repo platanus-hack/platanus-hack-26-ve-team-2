@@ -9,7 +9,7 @@ from tests.fakes import FakeLLM
 AUDIO = {"audio": ("pregunta.m4a", b"fake-m4a", "audio/m4a")}
 
 
-def _ask(client: TestClient, session_id: str | None = None, sim: str = "carabobo_prueba"):
+def _ask(client: TestClient, session_id: str | None = None, sim: str = "batalla"):
     data = {"session_id": session_id} if session_id else None
     return client.post(f"/simulations/{sim}/ask", files=AUDIO, data=data)
 
@@ -18,12 +18,12 @@ def test_ask_returns_reply_with_lipsync_and_uses_simulation_prompt(client, llm: 
     res = _ask(client)
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["simulation_id"] == "carabobo_prueba"
+    assert body["simulation_id"] == "batalla"
     assert body["character_id"] == "bolivar"
     assert body["character_name"].startswith("Simón Bolívar")
     assert body["transcript"] == "hola que tal"
     assert body["speech"]["audio_b64"] and body["speech"]["visemes"]
-    sim = CUBO_NEGRO.simulation("carabobo_prueba")
+    sim = CUBO_NEGRO.simulation("batalla")
     assert sim is not None
     # el prompt de la simulación (no el de personas.yaml) llega al LLM
     assert sim.prompt.splitlines()[0] in llm.requests[0].system_prompt
@@ -35,7 +35,7 @@ def test_general_conversation_uses_presenter_persona(client, llm: FakeLLM):
     assert res.json()["character_name"].startswith("Simón Bolívar")
     prompt = llm.requests[0].system_prompt
     assert "Santísima Trinidad" in prompt  # persona general de Bolívar (personas.yaml)
-    assert "La Batalla de Carabobo" in prompt  # ofrece las escenas de la región
+    assert "Pérdida del Castillo de San Felipe" in prompt  # ofrece las escenas de la región
 
 
 def test_ask_keeps_conversation_with_session_id(client, llm: FakeLLM):
@@ -53,10 +53,10 @@ def test_ask_with_unknown_or_expired_session_opens_a_new_one(client):
 
 def test_ask_errors(client):
     assert _ask(client, sim="nope").status_code == 404
-    no_audio = client.post("/simulations/carabobo_prueba/ask")
+    no_audio = client.post("/simulations/batalla/ask")
     assert no_audio.status_code == 422
     bad_mime = client.post(
-        "/simulations/carabobo_prueba/ask", files={"audio": ("x.txt", b"x", "text/plain")}
+        "/simulations/batalla/ask", files={"audio": ("x.txt", b"x", "text/plain")}
     )
     assert bad_mime.status_code == 422
 
@@ -65,7 +65,7 @@ def test_ask_infers_mime_from_extension_when_missing(client):
     # expo-file-system puede enviar el archivo sin content-type útil
     for mime in ("application/octet-stream", ""):
         files = {"audio": ("recording-123.m4a", b"fake-m4a", mime)}
-        res = client.post("/simulations/carabobo_prueba/ask", files=files)
+        res = client.post("/simulations/batalla/ask", files=files)
         assert res.status_code == 200, (mime, res.text)
 
 
@@ -79,7 +79,7 @@ def test_cubo_negro_is_a_circle_around_the_building():
 
 
 def test_ws_opens_session_on_connect_and_streams_sentences(client, llm: FakeLLM):
-    with client.websocket_connect("/simulations/carabobo_prueba/ws") as ws:
+    with client.websocket_connect("/simulations/batalla/ws") as ws:
         hello = ws.receive_json()
         assert hello["type"] == "session"
         ws.send_bytes(b"fake-")
@@ -89,7 +89,7 @@ def test_ws_opens_session_on_connect_and_streams_sentences(client, llm: FakeLLM)
         assert [m["type"] for m in msgs] == ["transcript", "speech", "speech", "reply", "turn_end"]
         assert msgs[1]["audio_b64"] and msgs[1]["visemes"]
         ws.send_json({"type": "end"})
-    sim = CUBO_NEGRO.simulation("carabobo_prueba")
+    sim = CUBO_NEGRO.simulation("batalla")
     assert sim is not None
     assert sim.prompt.splitlines()[0] in llm.requests[0].system_prompt
     # La sesión sobrevive al WS: /ask (o una reconexión) sigue el mismo hilo
@@ -100,7 +100,7 @@ def test_ws_opens_session_on_connect_and_streams_sentences(client, llm: FakeLLM)
 
 def test_ws_reuses_session_and_rejects_bad_input(client):
     first = _ask(client).json()["session_id"]
-    with client.websocket_connect(f"/simulations/carabobo_prueba/ws?session_id={first}") as ws:
+    with client.websocket_connect(f"/simulations/batalla/ws?session_id={first}") as ws:
         assert ws.receive_json()["session_id"] == first
         ws.send_json({"type": "start"})
         assert ws.receive_json()["code"] == "invalid_input"

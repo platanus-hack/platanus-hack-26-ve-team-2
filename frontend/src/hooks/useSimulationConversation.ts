@@ -3,7 +3,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { clientApi } from "@/api";
 import type { ApiError } from "@/api";
-import type { AudioFile, ImageFile, SimulationTurn, SimulationWsMessage, VisemeId } from "@/types/voice";
+import type {
+  AudioFile,
+  ImageFile,
+  SimulationAction,
+  SimulationTurn,
+  SimulationWsMessage,
+  VisemeId,
+} from "@/types/voice";
 
 import { useSpeechPlayer } from "./useSpeechPlayer";
 import { useVoiceRecorder } from "./useVoiceRecorder";
@@ -46,6 +53,10 @@ function errorMessage(code: string | undefined, message: string): string {
  * Va por WebSocket: la sesión se abre al montar (la primera pregunta no espera eso) y la respuesta
  * llega frase por frase, así el personaje empieza a hablar con la primera. Si el WebSocket no está
  * conectado, usa POST /ask (respuesta completa de una vez).
+ *
+ * `action`: lo que pidió el personaje en su respuesta (p. ej. abrir una escena). Queda disponible
+ * cuando el turno terminó y la pantalla la ejecuta al terminar de hablar, con `takeAction`. Hablarle
+ * de nuevo antes la descarta.
  */
 export function useSimulationConversation(
   simulationId: string,
@@ -66,6 +77,24 @@ export function useSimulationConversation(
   // El personaje está mirando la captura (entre el aviso "look" y su respuesta)
   const [looking, setLooking] = useState(false);
   const sessionId = useRef<string | null>(null);
+  // La acción llega antes que el audio: se guarda aquí hasta que el turno termina
+  const pendingAction = useRef<SimulationAction | null>(null);
+  // Lista para ejecutarse; anotada con su simulación: al cambiar de simulación deja de valer
+  const [ready, setReady] = useState<{ simulationId: string; action: SimulationAction } | null>(null);
+  const action = ready?.simulationId === simulationId ? ready.action : null;
+  const setAction = useCallback(
+    (next: SimulationAction | null) => setReady(next && { simulationId, action: next }),
+    [simulationId],
+  );
+  const clearAction = useCallback(() => {
+    pendingAction.current = null;
+    setReady(null);
+  }, []);
+  /** La acción lista para ejecutarse, que deja de estarlo. */
+  const takeAction = useCallback(() => {
+    clearAction();
+    return action;
+  }, [action, clearAction]);
 
   const captureRef = useRef(captureFrame);
   useEffect(() => {
@@ -164,12 +193,18 @@ export function useSimulationConversation(
         discardStoredFrame();
         if (__DEV__ && msg.type === "turn_end") console.log("[Voz] turno", msg.timings_ms);
         if (msg.type === "error") setError(errorMessage(msg.code, msg.message));
+        // Con el turno completo (todas las frases en cola) la acción queda lista; si falló, se descarta
+        setAction(msg.type === "turn_end" ? pendingAction.current : null);
+        pendingAction.current = null;
         if (phaseRef.current === "sending") setPhase("idle");
         return;
       }
       if (stale) return;
       if (msg.type === "transcript") {
         setLastTurn({ transcript: msg.text });
+      } else if (msg.type === "action") {
+        if (__DEV__) console.log("[Voz] acción", msg.action);
+        pendingAction.current = msg.action;
       } else if (msg.type === "look") {
         setLooking(true);
         void sendFrame(msg.look_id);
@@ -180,7 +215,7 @@ export function useSimulationConversation(
         if (phaseRef.current === "sending") setPhase("idle");
       }
     },
-    [clearTurnTimer, setPhase, speech, sendFrame, discardStoredFrame],
+    [clearTurnTimer, setPhase, speech, sendFrame, discardStoredFrame, setAction],
   );
 
   // El socket vive más que un render: lee siempre el handler actual
@@ -192,6 +227,7 @@ export function useSimulationConversation(
   // Otra simulación = otro personaje/prompt: la conversación empieza de cero, con su propio socket
   useEffect(() => {
     sessionId.current = null;
+    pendingAction.current = null;
     let closed = false;
     let attempt = 0;
     let retry: ReturnType<typeof setTimeout> | null = null;
@@ -236,6 +272,7 @@ export function useSimulationConversation(
     if (phaseRef.current !== "idle") return;
     speech.stop(); // hablarle encima al personaje lo interrumpe
     discardPending(); // y descarta las frases que faltaban
+    clearAction(); // y lo que iba a hacer al terminar
     setError(null);
     setPhase("recording");
     try {
@@ -244,7 +281,7 @@ export function useSimulationConversation(
       setPhase("idle");
       setError("No se pudo acceder al micrófono.");
     }
-  }, [setPhase, recorder, speech, discardPending]);
+  }, [setPhase, recorder, speech, discardPending, clearAction]);
 
   const askRest = useCallback(
     async (audio: AudioFile) => {
@@ -255,6 +292,7 @@ export function useSimulationConversation(
         sessionId.current = turn.session_id;
         setLastTurn(turn);
         speech.play(turn.speech);
+        setAction(turn.action ?? null);
       } catch (e) {
         const apiError = e as ApiError;
         setError(apiError.isConnectionError ? "Sin conexión con el servidor." : errorMessage(apiError.code, apiError.message));
@@ -263,7 +301,7 @@ export function useSimulationConversation(
         setPhase("idle");
       }
     },
-    [setPhase, simulationId, speech, takeStoredFrame],
+    [setPhase, simulationId, speech, takeStoredFrame, setAction],
   );
 
   const stopTalking = useCallback(async () => {
@@ -315,6 +353,8 @@ export function useSimulationConversation(
     lastTurn,
     error,
     looking,
+    action,
+    takeAction,
     startTalking,
     stopTalking,
   };

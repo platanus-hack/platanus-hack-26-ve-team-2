@@ -13,11 +13,14 @@ class RegionRepository(Protocol):
 
     def find_simulation(self, simulation_id: str) -> Simulation | None: ...
 
+    def region_of(self, simulation_id: str) -> Region | None: ...
+
 
 class InMemoryRegionRepository:
     def __init__(self, regions: tuple[Region, ...] = REGIONS) -> None:
         self._regions = {r.id: r for r in regions}
         self._simulations = {s.id: s for r in regions for s in r.simulations}
+        self._region_of = {s.id: r for r in regions for s in r.simulations}
 
     def list(self) -> list[Region]:
         return list(self._regions.values())
@@ -27,3 +30,6 @@ class InMemoryRegionRepository:
 
     def find_simulation(self, simulation_id: str) -> Simulation | None:
         return self._simulations.get(simulation_id)
+
+    def region_of(self, simulation_id: str) -> Region | None:
+        return self._region_of.get(simulation_id)

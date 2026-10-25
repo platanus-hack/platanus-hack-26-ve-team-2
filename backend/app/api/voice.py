@@ -6,7 +6,8 @@ respuesta), así el cliente reproduce la primera frase mientras se generan las d
 
 import logging
 import time
-from typing import Annotated
+from collections.abc import Callable
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -47,6 +48,7 @@ from app.voice.errors import (
 )
 from app.voice.ports import AudioInput, ImageInput
 from app.voice.service import (
+    ActionEvent,
     ConversationService,
     LookEvent,
     ReplyEvent,
@@ -58,6 +60,9 @@ from app.voice.service import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/voice", tags=["voice"])
+
+# Traduce la etiqueta de acción del LLM a lo que recibe la app (None: no es válida y se ignora)
+ActionHandler = Callable[[ActionEvent], dict[str, Any] | None]
 
 # Lo que graban navegadores (webm/ogg/mp4) y móviles (m4a/aac/3gp), más formatos comunes.
 ALLOWED_AUDIO_MIME = {
@@ -184,15 +189,19 @@ async def collect_turn(
     audio: AudioInput | None = None,
     text: str = "",
     image: ImageInput | None = None,
+    on_action: ActionHandler | None = None,
 ) -> TurnOut:
     """Ejecuta un turno completo y agrega sus eventos en una sola respuesta REST."""
     t0 = time.perf_counter()
     transcript, reply, speeches, timings = None, "", [], TurnTimings(t0)
+    action: dict[str, Any] | None = None
     async for event in service.run_turn(session, audio=audio, text=text, image=image):
         timings.record(event)
         match event:
             case TranscriptEvent():
                 transcript = event.text
+            case ActionEvent():
+                action = on_action(event) if on_action else None
             case ReplyEvent():
                 reply = event.text
             case SpeechEvent():
@@ -205,6 +214,7 @@ async def collect_turn(
         reply_text=reply,
         speech=SpeechOut.from_event(merge_speech(speeches)),
         timings_ms=timings.ms,
+        action=action,
     )
 
 
@@ -356,13 +366,23 @@ def _require(session: VoiceSession | None) -> VoiceSession:
     return session
 
 
-async def ws_turn(ws: WebSocket, service: ConversationService, session: VoiceSession, **kw):
+async def ws_turn(
+    ws: WebSocket,
+    service: ConversationService,
+    session: VoiceSession,
+    on_action: ActionHandler | None = None,
+    **kw,
+):
     timings = TurnTimings(time.perf_counter())
     async for event in service.run_turn(session, **kw):
         timings.record(event)
         match event:
             case TranscriptEvent():
                 await ws.send_json({"type": "transcript", "text": event.text})
+            case ActionEvent():
+                # Llega antes que el audio: la app la ejecuta cuando el personaje termina de hablar
+                if on_action and (action := on_action(event)):
+                    await ws.send_json({"type": "action", "action": action})
             case ReplyEvent():
                 await ws.send_json({"type": "reply", "text": event.text})
             case SpeechEvent():

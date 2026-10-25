@@ -67,6 +67,12 @@ export interface ImageFile {
   type: string;
 }
 
+/**
+ * Lo que la app hace cuando el personaje termina de hablar. Hoy: el presentador lanza una escena
+ * que el visitante pidió por voz ("háblame de la pérdida del castillo de San Felipe").
+ */
+export type SimulationAction = { type: "start_simulation"; simulation_id: string };
+
 /** Respuesta de POST /simulations/{id}/ask (espejo de backend/app/schemas/simulation.py). */
 export interface SimulationTurn extends Turn {
   /** Envíalo en la próxima pregunta para conservar el hilo de la conversación */
@@ -74,6 +80,8 @@ export interface SimulationTurn extends Turn {
   simulation_id: string;
   character_id: string;
   character_name: string;
+  /** null: no hay nada que hacer después de la respuesta */
+  action: SimulationAction | null;
 }
 
 /** Mensajes del servidor en WS /simulations/{id}/ws: la respuesta llega frase por frase. */
@@ -82,6 +90,8 @@ export type SimulationWsMessage =
   | { type: "transcript"; text: string }
   /** "¿Qué es esto?": el servidor espera la captura de la cámara en clientApi.simulations.look */
   | { type: "look"; look_id: string }
+  /** Llega antes que el audio; se ejecuta cuando el personaje termina de hablar */
+  | { type: "action"; action: SimulationAction }
   | ({ type: "speech"; index: number } & Speech)
   | { type: "reply"; text: string }
   | { type: "turn_end"; timings_ms: Record<string, number> }

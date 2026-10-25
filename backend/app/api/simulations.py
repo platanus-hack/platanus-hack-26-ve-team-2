@@ -10,8 +10,14 @@ sesión se abre al conectar y el audio llega frase por frase).
 "¿Qué es esto?": si la pregunta es por lo que enfoca la cámara, el WebSocket avisa
 {"type":"look","look_id"} y la app sube la captura a `POST /{simulation_id}/look/{look_id}`; el
 personaje la mira y responde en el mismo turno. Por REST la captura viaja junto al audio (`image`).
+
+Escenas por voz: en la conversación general, si el visitante pide un episodio que coincide con una
+escena de la región, el presentador lo introduce y la lanza. El turno trae
+`action: {"type":"start_simulation","simulation_id"}` (por WebSocket, un mensaje `action` antes del
+audio) y la app abre la escena cuando el personaje termina de hablar.
 """
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile, WebSocket, status
@@ -19,17 +25,44 @@ from pydantic import TypeAdapter, ValidationError
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app.api.deps import SimulationDep
-from app.api.voice import VoiceDep, collect_turn, normalize_mime, read_audio, ws_error, ws_turn
-from app.schemas.simulation import SimulationTurnOut
+from app.api.voice import (
+    ActionHandler,
+    VoiceDep,
+    collect_turn,
+    normalize_mime,
+    read_audio,
+    ws_error,
+    ws_turn,
+)
+from app.schemas.simulation import SimulationTurnOut, StartSimulationAction
 from app.schemas.voice import WsAudioEnd, WsEnd
-from app.simulations.domain import Simulation
+from app.simulations.domain import SCENE_ACTION, Simulation
 from app.simulations.errors import SimulationError
+from app.simulations.service import SimulationService
 from app.voice.errors import InvalidInputError, VoiceError, VoiceUnavailableError
 from app.voice.ports import AudioInput, ImageInput
-from app.voice.service import ConversationService
+from app.voice.service import ActionEvent, ConversationService
 from app.voice.sessions import VoiceSession
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/simulations", tags=["simulations"])
+
+
+def _scene_actions(simulations: SimulationService, simulation: Simulation) -> ActionHandler:
+    """`[ESCENA:<id>]` -> abrir esa escena, si el personaje de esta simulación puede lanzarla."""
+
+    def handle(event: ActionEvent) -> dict | None:
+        scene = (
+            simulations.scene_to_launch(simulation, event.value)
+            if event.name == SCENE_ACTION
+            else None
+        )
+        if scene is None:
+            log.warning("Acción ignorada en %s: [%s:%s]", simulation.id, event.name, event.value)
+            return None
+        return StartSimulationAction(simulation_id=scene.id).model_dump()
+
+    return handle
 
 
 @router.post("/{simulation_id}/ask", response_model=SimulationTurnOut)
@@ -55,7 +88,13 @@ async def ask(
     audio_in = await read_audio(audio, voice)
     image_in = await read_image(image, voice) if image is not None else None
     session = await _session_for(voice, simulation, session_id)
-    turn = await collect_turn(voice, session, audio=audio_in, image=image_in)
+    turn = await collect_turn(
+        voice,
+        session,
+        audio=audio_in,
+        image=image_in,
+        on_action=_scene_actions(simulations, simulation),
+    )
     _, character = voice.catalog.get(simulation.voice_location_id, simulation.character_id)
     return SimulationTurnOut(
         **turn.model_dump(),
@@ -81,7 +120,8 @@ async def ask_ws(
     conectar -> servidor: {"type":"session","session_id"} (reusa `?session_id=` si sigue viva)
     cliente  -> <frames binarios de audio> + {"type":"audio_end","mime_type":"audio/m4a"}
                 {"type":"end"}
-    servidor -> transcript, speech (uno por frase, con `index`), reply, turn_end, error
+    servidor -> transcript, action (si lanza una escena), speech (uno por frase, con `index`),
+                reply, turn_end, error
     """
     voice: ConversationService | None = getattr(ws.app.state, "voice", None)
     await ws.accept()
@@ -122,7 +162,14 @@ async def ask_ws(
                 if voice.get_session(session.id) is None:
                     session = await _session_for(voice, simulation, None)
                     await ws.send_json({"type": "session", "session_id": session.id})
-                await ws_turn(ws, voice, session, audio=audio, request_image=True)
+                await ws_turn(
+                    ws,
+                    voice,
+                    session,
+                    on_action=_scene_actions(simulations, simulation),
+                    audio=audio,
+                    request_image=True,
+                )
             except ValidationError:
                 await ws_error(ws, InvalidInputError("Mensaje inválido"))
             except VoiceError as e:
