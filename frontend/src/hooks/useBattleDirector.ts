@@ -10,9 +10,16 @@ const EFFECTS_VOLUME_WITH_VOICES = 0.7;
 // Prefijo de los reproductores de voz: no se confunden con los efectos aunque compartan nombre
 const VOICE = "voz:";
 const LIPSYNC_GRACE_MS = 400;
-// Reproductores por efecto: los disparos de una descarga se superponen y reiniciar el mismo
-// reproductor cortaría el anterior
+// Reproductores por efecto, como máximo: los disparos de una descarga se superponen y reiniciar el
+// mismo reproductor cortaría el anterior. Un efecto que suena una sola vez lleva uno (en iOS cada
+// reproductor es un AVPlayer: decenas a la vez es pedir problemas)
 const POOL = 3;
+// iOS: cada pause() de un reproductor sin esto desactiva la sesión de audio de la app si en ese
+// momento nada suena; al pausar los ~30 de la batalla (repetir, salir) la sesión se apagaba y los
+// sonidos siguientes podían quedar mudos
+const PLAYER_OPTIONS = { keepAudioSessionActive: true };
+// Que suene aunque el iPhone esté en silencio, y por el altavoz (no por el auricular de llamadas)
+const PLAYBACK_MODE = { playsInSilentMode: true, allowsRecording: false } as const;
 
 /**
  * Dirige la coreografía en curso: mientras corre la animación dispara cada efecto de sonido y cada
@@ -33,24 +40,30 @@ export function useBattleDirector(choreography: Choreography | undefined) {
   // Un reproductor por efecto y por línea, cargados de antemano para que suenen sin demora
   useEffect(() => {
     if (!choreography) return;
+    // El modo de audio desde ya, no al arrancar: el primer efecto suena apenas empieza
+    setAudioModeAsync(PLAYBACK_MODE).catch((e: unknown) => console.warn("[Batalla] modo de audio", e));
     const voices = choreography.voices ?? [];
+    const uses: Record<string, number> = {};
+    for (const { sound } of choreography.cues) uses[sound] = (uses[sound] ?? 0) + 1;
     const created: Record<string, AudioPlayer[]> = {};
     for (const [name, source] of Object.entries(choreography.sounds)) {
-      created[name] = Array.from({ length: POOL }, () => createAudioPlayer(source));
+      const size = Math.min(POOL, Math.max(1, uses[name] ?? 0));
+      created[name] = Array.from({ length: size }, () => createAudioPlayer(source, PLAYER_OPTIONS));
       if (voices.length) created[name].forEach((p) => (p.volume = EFFECTS_VOLUME_WITH_VOICES));
     }
-    for (const voice of voices) created[VOICE + voice.id] = [createAudioPlayer(voice.source)];
+    for (const voice of voices) created[VOICE + voice.id] = [createAudioPlayer(voice.source, PLAYER_OPTIONS)];
+    if (__DEV__) console.log("[Batalla] reproductores", Object.values(created).flat().length);
     players.current = created;
     return () => {
-      Object.values(created).flat().forEach((p) => p.release());
+      Object.values(created).flat().forEach((p) => safely(() => p.release()));
       players.current = {};
     };
   }, [choreography]);
 
   useEffect(() => {
     if (!choreography || battle !== "playing") return;
-    // Que suene aunque el iPhone esté en silencio, y por el altavoz (no por el auricular de llamadas)
-    setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false }).catch(() => {});
+    // De nuevo por si una grabación lo cambió (con allowsRecording sonaría por el auricular)
+    setAudioModeAsync(PLAYBACK_MODE).catch((e: unknown) => console.warn("[Batalla] modo de audio", e));
     const stopLipsync: (() => void)[] = [];
     let cancelled = false;
     const timers = choreography.cues.map(({ atMs, sound, at, effect }) =>
@@ -68,7 +81,7 @@ export function useBattleDirector(choreography: Choreography | undefined) {
           // leer su tiempo para la boca (si no, el lipsync creía que ya había terminado)
           await player.seekTo(0).catch(() => {});
           if (cancelled) return;
-          player.play();
+          safely(() => player.play());
           if (voice.character === hostCharacter) stopLipsync.push(lipsync(player, voice));
         }, voice.atMs),
       );
@@ -80,7 +93,8 @@ export function useBattleDirector(choreography: Choreography | undefined) {
       timers.forEach(clearTimeout);
       stopLipsync.forEach((stop) => stop());
       // Si se corta a la mitad (repetir, cambiar de simulación, salir) no quedan sonidos ni voces
-      Object.values(current).flat().forEach((p) => p.pause());
+      // (si cambió la coreografía, el otro efecto ya los liberó: pausarlos lanzaría)
+      Object.values(current).flat().forEach((p) => safely(() => p.pause()));
     };
   }, [choreography, battle, hostCharacter]);
 
@@ -100,7 +114,16 @@ function playSound(players: Record<string, AudioPlayer[]>, name: string) {
   const i = (nextPlayer[name] = ((nextPlayer[name] ?? -1) + 1) % pool.length);
   const player = pool[i];
   player.seekTo(0).catch(() => {});
-  player.play();
+  safely(() => player.play());
+}
+
+/** Un fallo de un reproductor (p. ej. ya liberado) no corta el resto de la coreografía. */
+function safely(action: () => void) {
+  try {
+    action();
+  } catch (e) {
+    console.warn("[Batalla] audio", e);
+  }
 }
 
 /**

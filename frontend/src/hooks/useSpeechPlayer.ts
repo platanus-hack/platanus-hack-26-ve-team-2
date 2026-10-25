@@ -26,7 +26,10 @@ interface Clip {
  * entre una frase y la siguiente para que el personaje no deje de gesticular.
  */
 export function useSpeechPlayer(onViseme?: (viseme: VisemeId) => void) {
-  const player = useAudioPlayer(null);
+  // iOS: sin esto, al terminar la respuesta expo-audio apaga la sesión de audio de la app 100 ms
+  // después si nada suena. Cuando la respuesta lanza una escena, la escena arranca justo ahí y su
+  // primer sonido caía en esa ventana: la sesión se apagaba con la batalla ya empezada y quedaba muda
+  const player = useAudioPlayer(null, { keepAudioSessionActive: true });
   const { playing } = useAudioPlayerStatus(player);
   const [visemes, setVisemes] = useState<Viseme[]>([]);
   const [active, setActive] = useState(false);
