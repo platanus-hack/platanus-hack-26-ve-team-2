@@ -1,4 +1,4 @@
-# VISTA
+# Arvi
 
 **Un guía turístico con IA en tu bolsillo: llegas a un lugar, apuntas la cámara y la historia aparece frente a ti para conversar contigo.**
 
@@ -6,7 +6,7 @@
 
 Cuando visitas un lugar nuevo, la historia que pasó ahí está escondida en placas que nadie lee, guías caros con horario fijo o artículos que no responden preguntas. Y aprender historia (o cualquier tema) sigue siendo, casi siempre, leer y memorizar.
 
-VISTA convierte cualquier lugar en una experiencia viva: un guía que sabe dónde estás, te cuenta lo que ocurrió ahí, responde lo que le preguntes con su propia voz y te deja **ver** los momentos históricos en 3D, en el sitio real.
+Arvi convierte cualquier lugar en una experiencia viva: un guía que sabe dónde estás, te cuenta lo que ocurrió ahí, responde lo que le preguntes con su propia voz y te deja **ver** los momentos históricos en 3D, en el sitio real.
 
 ## ¿Qué puede hacer hoy?
 
