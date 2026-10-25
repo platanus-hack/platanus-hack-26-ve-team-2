@@ -11,7 +11,9 @@ import {
 import { CircleButton, Icon } from "@/components/common";
 import {
   arSession,
+  MAX_FIELD_SCALE,
   MAX_SIZE_SCALE,
+  MIN_FIELD_SCALE,
   MIN_SIZE_SCALE,
   useArSession,
 } from "@/hooks/useArSession";
@@ -166,6 +168,32 @@ export function MovePanel() {
   );
 }
 
+/**
+ * Tamaño de la escena de campo (las trincheras): arranca ajustado al piso detectado y aquí se agranda
+ * o achica para que quepa en el lugar. Va junto a los botones de abajo: en esa escena no hay modo "mover"
+ */
+export function SceneSizeControl() {
+  const scale = useArSession((s) => s.fieldScale);
+  return (
+    <View style={[styles.sizeRow, styles.sceneSize]}>
+      <Text style={styles.sizeLabel}>Escena</Text>
+      <SizeButton
+        label="Escena más pequeña"
+        sign="−"
+        disabled={scale <= MIN_FIELD_SCALE}
+        onPress={() => arSession.resize(-1)}
+      />
+      <Text style={styles.sizeValue}>{Math.round(scale * 100)} %</Text>
+      <SizeButton
+        label="Escena más grande"
+        sign="+"
+        disabled={scale >= MAX_FIELD_SCALE}
+        onPress={() => arSession.resize(1)}
+      />
+    </View>
+  );
+}
+
 function SizeButton({
   label,
   sign,
@@ -249,6 +277,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
+  },
+  sceneSize: {
+    ...glass,
+    alignSelf: "center",
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
   },
   sizeLabel: {
     color: "#c6cec9",

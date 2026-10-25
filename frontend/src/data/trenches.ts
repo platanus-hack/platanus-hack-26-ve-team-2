@@ -29,6 +29,13 @@ export interface TrenchParapet {
 export const TRENCH_SLOTS = timeline.slots as TrenchSlot[];
 export const TRENCH_PARAPETS = timeline.parapets as TrenchParapet[];
 
+// Lo que ocupa el campo: de la espalda de un bando a la del otro (+0,35 m de cuerpo) y a lo largo de
+// la fila (+0,5 m para el parapeto, más largo que la fila)
+const FOOTPRINT: [number, number] = [
+  2 * (Math.max(...TRENCH_SLOTS.map((s) => Math.abs(s.position[0]))) + 0.35),
+  2 * (Math.max(...TRENCH_SLOTS.map((s) => Math.abs(s.position[2]))) + 0.5),
+];
+
 /**
  * Trincheras de La Victoria (1814): patriotas a la izquierda del usuario y realistas a la derecha,
  * cada bando tras su parapeto, se disparan por descargas. Al terminar caen los globos.
@@ -36,6 +43,7 @@ export const TRENCH_PARAPETS = timeline.parapets as TrenchParapet[];
 export const trenchesChoreography: Choreography = {
   animation: timeline.animation,
   layout: "field",
+  footprint: FOOTPRINT,
   durationMs: timeline.durationMs,
   cues: timeline.cues as Choreography["cues"],
   sounds: {

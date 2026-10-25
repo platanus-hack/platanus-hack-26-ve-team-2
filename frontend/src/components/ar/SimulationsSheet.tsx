@@ -43,7 +43,7 @@ export function SimulationsSheet({ visible, siteName, simulations, currentId, on
                 <Text style={styles.num}>0{i + 1}</Text>
                 <View style={styles.info}>
                   <Text style={[styles.rowTitle, isCurrent && { color: "#c76035" }]}>{item.title}</Text>
-                  {item.space === "open" && <Text style={styles.badge}>ESPACIO ABIERTO · ~20 M</Text>}
+                  {item.space === "open" && <Text style={styles.badge}>ESPACIO ABIERTO · ~6 M</Text>}
                   <Text style={styles.rowDetail}>{item.description}</Text>
                 </View>
                 <Icon name="chevron" />

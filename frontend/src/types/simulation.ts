@@ -81,6 +81,8 @@ export interface Choreography {
    * `choreographyAnimation`
    */
   layout?: "stage" | "field";
+  /** Solo en el campo: lo que ocupa (m) a lo ancho (X, de un bando al otro) y de fondo (Z) a tamaño real */
+  footprint?: [number, number];
   durationMs: number;
   cues: SoundCue[];
   /** Assets de cada sonido que nombran los cues (y el del final) */

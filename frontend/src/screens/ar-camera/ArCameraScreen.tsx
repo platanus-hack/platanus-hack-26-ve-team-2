@@ -6,7 +6,15 @@ import { useEffect, useRef, useState } from "react";
 import { AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { CameraShade, MicPermissionPrompt, MovePanel, MoveSurface, PushToTalkButton, SimulationsSheet } from "@/components/ar";
+import {
+  CameraShade,
+  MicPermissionPrompt,
+  MovePanel,
+  MoveSurface,
+  PushToTalkButton,
+  SceneSizeControl,
+  SimulationsSheet,
+} from "@/components/ar";
 import { VistaARScene } from "@/components/ar/VistaARScene";
 import { CircleButton, Icon, PrimaryButton, PrimaryLabel, StatusRow } from "@/components/common";
 import { type ActiveSimulation, useActiveSimulation } from "@/contexts/ActiveSimulationContext";
@@ -122,13 +130,15 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
   const faceUser = useArSession((s) => s.faceUser);
   const editing = useArSession((s) => s.editing);
   const moveNotice = useArSession((s) => s.moveNotice);
-  // Coreografía de campo abierto (las trincheras): se arma frente al usuario y el anfitrión sigue libre
+  // Coreografía de campo abierto (las trincheras): se arma frente al usuario y el anfitrión no se ve
   const fieldScene = useArSession((s) => s.choreography?.layout === "field");
-  // El anfitrión que llega caminando ya tiene su lugar definido: ese no se puede mover. En la batalla
-  // tampoco: la coreografía decide dónde está cada uno
+  // El campo ya se armó: su tamaño se puede ajustar
+  const fieldPlaced = useArSession((s) => s.choreography?.layout === "field" && s.field !== null);
+  // El anfitrión que llega caminando ya tiene su lugar definido: ese no se puede mover. En las
+  // coreografías tampoco: en la batalla deciden dónde está cada uno y en el campo está oculto
   const movableHost = useArSession((s) => {
     const host = s.objects.find((o) => o.kind === "dynamic");
-    return !!host && host.kind === "dynamic" && !host.entrance && (s.battle === "off" || s.choreography?.layout === "field");
+    return !!host && host.kind === "dynamic" && !host.entrance && s.battle === "off";
   });
   const battle = useArSession((s) => s.battle);
   // Efectos de sonido y final de la coreografía (la batalla), si la simulación tiene
@@ -209,7 +219,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
         title: `Simulación alineada · a ${String(floorDistance).replace(".", ",")} m`,
         subtitle:
           current?.space === "open"
-            ? "Necesitas un espacio abierto de unos 20 m: la escena se arma frente a ti"
+            ? "Necesitas unos 6 m libres: la escena se arma frente a ti y se ajusta al espacio"
             : "Inclina el teléfono para acercarla o alejarla y toca para comenzar",
       };
     if (!floorFound)
@@ -234,7 +244,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
     // Al pasar el teléfono a otra persona ARCore puede perder el rastreo un momento
     if (!tracking) return "Recuperando el rastreo, mueve el teléfono despacio";
     if (fieldScene) {
-      if (battle === "waiting") return "Párate en un espacio abierto y mira al frente: un bando quedará a cada lado";
+      if (battle === "waiting") return "Mira al frente, hacia el espacio libre: un bando quedará a cada lado";
       if (battle === "playing") return "¡Fuego cruzado! Mira a ambos lados";
       if (battle === "finished") return "¡Los realistas se retiran! La Victoria resiste";
       return null;
@@ -366,6 +376,7 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
                   <Text style={styles.chipText}>Mirarme</Text>
                 </Pressable>
               )}
+              {fieldPlaced && <SceneSizeControl />}
             </View>
             <View style={styles.sceneLabel}>
               <Text style={styles.nowPlaying}>{current?.kind === "general" ? "EN CONVERSACIÓN" : "REPRODUCIENDO"}</Text>
@@ -399,13 +410,16 @@ function ArSimulationView({ active }: { active: ActiveSimulation }) {
             ) : mic.status === "granted" ? (
               <View style={styles.talkRow}>
                 <View style={styles.side}>
-                  <CircleButton
-                    label={follow ? "Dejar de seguirme" : "Seguirme"}
-                    variant={follow ? "solid" : "glass"}
-                    onPress={() => arSession.setFollow(!follow)}
-                  >
-                    <Icon name="walk" color={follow ? colors.ink : "white"} />
-                  </CircleButton>
+                  {/* En el campo el anfitrión está oculto: no tiene a quién seguir */}
+                  {!fieldScene && (
+                    <CircleButton
+                      label={follow ? "Dejar de seguirme" : "Seguirme"}
+                      variant={follow ? "solid" : "glass"}
+                      onPress={() => arSession.setFollow(!follow)}
+                    >
+                      <Icon name="walk" color={follow ? colors.ink : "white"} />
+                    </CircleButton>
+                  )}
                 </View>
                 <PushToTalkButton
                   phase={phase}

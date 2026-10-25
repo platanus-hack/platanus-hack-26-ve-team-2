@@ -108,13 +108,16 @@ const EDIT_TURN_SPEED = 240;
 // Al tocar el piso, preferimos los hits más confiables
 const TAP_HIT_PRIORITY = ["ExistingPlane", "DepthPoint", "EstimatedHorizontalPlane", "FeaturePoint"];
 const DEG = Math.PI / 180;
-// Coreografía de campo (las trincheras): su centro queda a esta distancia (m) delante del usuario, así
-// la línea de fuego pasa frente a él y ve un bando a cada lado
-const FIELD_DISTANCE = 3;
+// Coreografía de campo (las trincheras): el usuario queda a este espacio (m, a tamaño real) del borde
+// más cercano del campo, que se arma de lado frente a él (un bando a cada lado, la línea de fuego cruzada)
+const FIELD_MARGIN = 1.3;
 // Por debajo de esto la dirección horizontal de la cámara es inestable (mira recto al piso o al cielo)
 const MIN_FIELD_AIM = 0.2;
-// Sombra del campo: cubre los dos parapetos (a ±7,6 m) y algo más
-const FIELD_SHADOW: [number, number] = [22, 8];
+// El campo se achica solo para caber en el piso detectado, pero no más que esto: los planos de ARCore
+// arrancan chicos y crecen a medida que se ve más piso (después se ajusta con los botones)
+const MIN_FIELD_FIT = 0.5;
+// Lo que ocupa el campo si la coreografía no lo dice (ancho, fondo)
+const DEFAULT_FOOTPRINT: [number, number] = [6, 3];
 // Lo que dura el fogonazo de un disparo
 const FLASH_MS = 90;
 // Una sola bocanada de humo al disparar. El nativo de Viro (Android e iOS) espera una lista de ráfagas,
@@ -179,6 +182,7 @@ export function VistaARScene() {
   const choreography = useArSession((s) => s.choreography);
   const field = useArSession((s) => s.field);
   const firing = useArSession((s) => s.firing);
+  const fieldScale = useArSession((s) => s.fieldScale);
   // El anfitrión (primer objeto dinámico) saluda al aparecer y cuando lo tocan
   const host = objects.find((o): o is DynamicSceneObject => o.kind === "dynamic");
   const hostId = host?.id;
@@ -199,7 +203,7 @@ export function VistaARScene() {
   const lastUpdate = useRef(0);
   const lastHitLog = useRef(0);
   const lastFloorAt = useRef(0);
-  const planes = useRef(new Map<string, { y: number; area: number }>());
+  const planes = useRef(new Map<string, { y: number; area: number; width: number; height: number }>());
   // Altura del último plano real que tocó el centro de la pantalla: es el piso que el usuario está viendo
   const aimLevel = useRef<number | null>(null);
   // Altura del piso según los hit tests de la parte baja de la pantalla
@@ -232,10 +236,14 @@ export function VistaARScene() {
 
   // El piso es el plano horizontal más grande. No usamos el más bajo: ARCore a veces detecta planos
   // fantasma decenas de cm bajo el piso real y el anillo quedaba enterrado
-  function largestPlaneY(): number | null {
-    let best: { y: number; area: number } | null = null;
+  function largestPlane() {
+    let best: { y: number; area: number; width: number; height: number } | null = null;
     for (const p of planes.current.values()) if (!best || p.area > best.area) best = p;
-    return best?.y ?? null;
+    return best;
+  }
+
+  function largestPlaneY(): number | null {
+    return largestPlane()?.y ?? null;
   }
 
   function onPlane(anchor: ViroAnchor) {
@@ -243,7 +251,7 @@ export function VistaARScene() {
     const area = (anchor.width ?? 0) * (anchor.height ?? 0);
     if (area < MIN_PLANE_AREA) return;
     if (__DEV__ && !planes.current.has(anchor.anchorId)) console.log("[AR] plano", anchor.anchorId, anchor.position[1], area.toFixed(2));
-    planes.current.set(anchor.anchorId, { y: anchor.position[1], area });
+    planes.current.set(anchor.anchorId, { y: anchor.position[1], area, width: anchor.width ?? 0, height: anchor.height ?? 0 });
     const floorY = largestPlaneY();
     const current = arSession.get().floorY;
     if (floorY !== null && (current === null || Math.abs(current - floorY) > 0.01)) arSession.set({ floorY });
@@ -540,7 +548,21 @@ export function VistaARScene() {
     if (!arSession.get().editing) arSession.wave();
   }
 
-  /** Marco del campo: FIELD_DISTANCE delante del usuario, con +Z hacia él (un bando a cada lado) */
+  /**
+   * Escala con la que el campo cabe en el piso detectado (el plano más grande): su ancho en el lado
+   * largo del plano y su fondo en el corto. Sin planos medidos, tamaño real
+   */
+  function fieldFit(footprint: [number, number]): number {
+    const plane = largestPlane();
+    if (!plane || !plane.width || !plane.height) return 1;
+    const long = Math.max(plane.width, plane.height);
+    const short = Math.min(plane.width, plane.height);
+    const fit = Math.min(1, long / footprint[0], short / footprint[1]);
+    if (__DEV__) console.log("[AR] espacio", JSON.stringify({ plane: [long, short], footprint, fit }));
+    return Math.max(MIN_FIELD_FIT, fit);
+  }
+
+  /** Marco del campo delante del usuario, con +Z hacia él (un bando a cada lado), ajustado al espacio */
   function placeField(placement: { point: Vec3; yaw: number }, camera: Vec3, forward: Vec3) {
     const [cx, cz] = toPlacementFrame(placement, camera[0], camera[2]);
     const [fx, fz] = toPlacementFrame(placement, placement.point[0] + forward[0], placement.point[2] + forward[2]);
@@ -548,8 +570,12 @@ export function VistaARScene() {
     if (len < MIN_FIELD_AIM) return;
     const dx = fx / len;
     const dz = fz / len;
-    if (__DEV__) console.log("[AR] campo", JSON.stringify({ camera: [cx, cz], forward: [dx, dz] }));
-    arSession.setField({ x: cx + dx * FIELD_DISTANCE, z: cz + dz * FIELD_DISTANCE, yaw: Math.atan2(-dx, -dz) / DEG });
+    const footprint = arSession.get().choreography?.footprint ?? DEFAULT_FOOTPRINT;
+    const scale = fieldFit(footprint);
+    // El centro, a medio fondo del campo más el margen: el borde más cercano queda a FIELD_MARGIN
+    const distance = (footprint[1] / 2 + FIELD_MARGIN) * scale;
+    if (__DEV__) console.log("[AR] campo", JSON.stringify({ camera: [cx, cz], forward: [dx, dz], scale, distance }));
+    arSession.setField({ x: cx + dx * distance, z: cz + dz * distance, yaw: Math.atan2(-dx, -dz) / DEG }, scale);
   }
 
   // Las órdenes del modo "mover" llegan desde la UI
@@ -725,7 +751,9 @@ export function VistaARScene() {
                     hostAnimation={animation}
                     onTap={onHostTap}
                     size={size}
-                    // En el campo el anfitrión no es parte de la coreografía
+                    // En el campo el anfitrión no es parte de la coreografía: tampoco se ve (quedaba en
+                    // medio del campo); sigue montado para volver al instante y conversar en off
+                    hidden={fieldLayout && obj.id === hostId}
                     battle={stageBattle ? battle : "off"}
                     battleAnimation={choreography?.animation}
                   />
@@ -746,15 +774,16 @@ export function VistaARScene() {
             </ViroNode>
           )}
           {field && fieldLayout && (
-            // Campo de la coreografía: cada objeto en su posición real del marco del campo
-            <ViroNode position={[field.x, 0, field.z]} rotation={[0, field.yaw, 0]}>
+            // Campo de la coreografía: cada objeto en su posición del marco del campo, todo a la escala
+            // que cabe en el lugar (la sombra, el humo y los globos también)
+            <ViroNode position={[field.x, 0, field.z]} rotation={[0, field.yaw, 0]} scale={[fieldScale, fieldScale, fieldScale]}>
               {/* El foco del anfitrión no alcanza: una luz direccional con sombra para todo el campo */}
               <ViroDirectionalLight
                 direction={[0.35, -1, -0.25]}
                 intensity={400}
                 castsShadow
                 shadowOpacity={0.4}
-                shadowOrthographicSize={30}
+                shadowOrthographicSize={12}
                 shadowMapSize={2048}
                 shadowNearZ={1}
                 shadowFarZ={30}
@@ -781,7 +810,12 @@ export function VistaARScene() {
                 <FieldShotEffect key={shot.id} shot={shot} />
               ))}
               {battle === "finished" && <Balloons />}
-              <ViroQuad rotation={[-90, 0, 0]} width={FIELD_SHADOW[0]} height={FIELD_SHADOW[1]} arShadowReceiver />
+              <ViroQuad
+                rotation={[-90, 0, 0]}
+                width={(choreography?.footprint ?? DEFAULT_FOOTPRINT)[0] + 1}
+                height={(choreography?.footprint ?? DEFAULT_FOOTPRINT)[1] + 1}
+                arShadowReceiver
+              />
             </ViroNode>
           )}
           {objects
@@ -837,6 +871,8 @@ type SceneModelProps = {
   preloadOnly?: boolean;
   /** Terminó de cargar el modelo (o falló): con eso se monta la siguiente copia del mismo GLB */
   onLoaded?: () => void;
+  /** Montado pero oculto (el anfitrión durante la escena de campo) */
+  hidden?: boolean;
 };
 
 function SceneModel({
@@ -849,6 +885,7 @@ function SceneModel({
   battleAnimation,
   preloadOnly = false,
   onLoaded,
+  hidden = false,
 }: SceneModelProps) {
   const entrance = obj.kind === "dynamic" ? obj.entrance : undefined;
   const [loaded, setLoaded] = useState(false);
@@ -903,9 +940,11 @@ function SceneModel({
         // Antes de arrancar la batalla los demás no se ven (estarían en pose de reposo encima del
         // anfitrión), y al terminar el anfitrión ya se fue corriendo
         visible={
-          !preloadOnly && (obj.kind === "static" || !inBattle || (isHost ? battle !== "finished" : battle !== "waiting"))
+          !preloadOnly &&
+          !hidden &&
+          (obj.kind === "static" || !inBattle || (isHost ? battle !== "finished" : battle !== "waiting"))
         }
-        onClick={isHost && !inBattle ? onTap : undefined}
+        onClick={isHost && !inBattle && !hidden ? onTap : undefined}
         onLoadStart={() => __DEV__ && console.log("[AR] cargando modelo", obj.id, obj.model)}
         onLoadEnd={() => {
           if (__DEV__) console.log("[AR] modelo cargado", obj.id);

@@ -20,7 +20,7 @@ class SimulationSummaryOut(BaseModel):
         description="general = conversación con el presentador; scene = escena histórica"
     )
     space: Literal["compact", "open"] = Field(
-        description="open = la escena necesita un espacio abierto de ~20 m; compact = cabe en cualquier lado"
+        description="open = la escena necesita un espacio abierto de ~6 m; compact = cabe en cualquier lado"
     )
 
     @classmethod

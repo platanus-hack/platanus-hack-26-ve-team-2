@@ -26,7 +26,7 @@ class Simulation:
     # "general": conversación con el presentador (Bolívar) sobre cualquier tema de su vida, la que
     # arranca al entrar; "scene": una escena histórica concreta con su propio contexto.
     kind: Literal["general", "scene"] = "scene"
-    # "open": la escena ocupa un campo de ~20 m (p. ej. las trincheras) y necesita un espacio
+    # "open": la escena ocupa un campo de ~6 m (p. ej. las trincheras) y necesita un espacio
     # abierto; "compact": cabe alrededor del anfitrión.
     space: Literal["compact", "open"] = "compact"
 

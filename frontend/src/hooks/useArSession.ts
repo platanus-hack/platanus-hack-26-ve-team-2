@@ -17,6 +17,10 @@ const MAX_AUTO_SCALE = 1.3;
 export const SIZE_STEP = 0.05;
 export const MIN_SIZE_SCALE = 0.7;
 export const MAX_SIZE_SCALE = 1.3;
+// Escala del campo (las trincheras): arranca ajustada al piso detectado y se cambia con los mismos botones
+export const FIELD_SCALE_STEP = 0.1;
+export const MIN_FIELD_SCALE = 0.3;
+export const MAX_FIELD_SCALE = 1.2;
 
 export type ArSessionState = {
   /** Objetos 3D de la simulación activa; se montan relativos al punto del piso elegido */
@@ -53,6 +57,11 @@ export type ArSessionState = {
    * colocación. Se fija frente al usuario al empezar; null hasta entonces
    */
   field: { x: number; z: number; yaw: number } | null;
+  /**
+   * Escala del campo (1 = tamaño real). Va aparte de `field`: cambiarla no es un campo nuevo (los
+   * modelos no se vuelven a montar)
+   */
+  fieldScale: number;
   /** Disparos recientes en el campo: la escena dibuja su fogonazo y su humo */
   firing: FieldShot[];
   /** Si el anfitrión camina detrás del usuario cuando se aleja (si no, solo se gira para mirarlo) */
@@ -87,6 +96,7 @@ const initialState: ArSessionState = {
   choreography: null,
   battle: "off",
   field: null,
+  fieldScale: 1,
   firing: [],
   follow: false,
   faceUser: true,
@@ -176,9 +186,9 @@ export const arSession = {
       );
       const mounted = new Set([...objects, ...preload].map((o) => o.id));
       for (const id of loadedModels) if (!mounted.has(id)) loadedModels.delete(id);
-      // En la batalla no hay modo "mover": la coreografía decide dónde está cada uno. En el campo sí:
-      // el anfitrión sigue con el usuario
-      const hostFree = !choreography || isField(choreography);
+      // Con coreografía no hay modo "mover" ni seguir: en la batalla la coreografía decide dónde está
+      // cada uno y en el campo el anfitrión está oculto
+      const hostFree = !choreography;
       set({
         objects,
         preload,
@@ -264,9 +274,9 @@ export const arSession = {
     setTimeout(() => arSession.startIfReady(), 50);
   },
   /** Marco del campo frente al usuario: lo calcula la escena con la pose de la cámara */
-  setField(field: NonNullable<ArSessionState["field"]>) {
+  setField(field: NonNullable<ArSessionState["field"]>, fieldScale: number) {
     if (!isField(state.choreography) || state.field) return;
-    set({ field });
+    set({ field, fieldScale });
     arSession.startIfReady();
   },
   /** Un disparo (o un grito, una caída) que suena en un punto del campo, con su humo */
@@ -319,8 +329,8 @@ export const arSession = {
   },
   /** Seguir al usuario implica volver a mirarlo */
   setFollow(follow: boolean) {
-    // En la batalla la coreografía decide dónde está cada uno
-    if (hostInChoreography()) return;
+    // En la batalla la coreografía decide dónde está cada uno; en el campo el anfitrión está oculto
+    if (state.battle !== "off") return;
     set(follow ? { follow, faceUser: true } : { follow });
   },
   /** Vuelve a girarse solo para mirar al usuario (tras haberlo orientado a mano) */
@@ -333,6 +343,12 @@ export const arSession = {
   },
   /** Agranda (+1) o achica (-1) a los personajes un paso */
   resize(direction: 1 | -1) {
+    // En el campo los botones cambian el tamaño de toda la escena (que quepa en el lugar)
+    if (isField(state.choreography) && state.field) {
+      const scale = Math.round((state.fieldScale + direction * FIELD_SCALE_STEP) * 100) / 100;
+      set({ fieldScale: Math.min(MAX_FIELD_SCALE, Math.max(MIN_FIELD_SCALE, scale)) });
+      return;
+    }
     const next = Math.round((state.sizeScale + direction * SIZE_STEP) * 100) / 100;
     set({ sizeScale: Math.min(MAX_SIZE_SCALE, Math.max(MIN_SIZE_SCALE, next)) });
   },

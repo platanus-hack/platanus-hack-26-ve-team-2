@@ -65,7 +65,7 @@ CUBO_NEGRO_SCENES = (
     Simulation(
         id="trincheras",
         title="Las trincheras de La Victoria",
-        description="Patriotas y realistas se disparan desde sus parapetos. Necesitas un espacio abierto.",
+        description="Patriotas y realistas se disparan desde sus parapetos. Necesitas unos 6 m libres.",
         prompt=TRINCHERAS_PROMPT,
         voice_location_id="la_victoria",
         character_id="bolivar",

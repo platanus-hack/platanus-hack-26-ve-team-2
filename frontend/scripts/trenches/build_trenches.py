@@ -43,9 +43,11 @@ FLASH = "Flash"
 
 # --- campo ----------------------------------------------------------------------------------------
 
-SOLDIER_X = 8.9
-PARAPET_X = 7.6
-SLOT_Z = {"a": -1.8, "b": -0.6, "c": 0.6, "d": 1.8}
+# Campo para una tarima de ~6 m, a tamaño real: ~6,4 m de ancho (de un bando al otro) por ~3,3 m de
+# fondo. Los soldados quedan 0,4 m detrás de la cara de su parapeto (al caer se desploman contra él)
+SOLDIER_X = 2.85
+PARAPET_X = 2.05
+SLOT_Z = {"a": -1.2, "b": -0.4, "c": 0.4, "d": 1.2}
 SIDES = {"patriota": (-1, 90), "realista": (1, -90)}  # lado (signo de X) y giro en la app
 # Desfase de cada variante dentro de una descarga (s): no disparan todos a la vez
 OFFSET = {"a": 0.0, "b": 0.18, "c": 0.42, "d": 0.65}
@@ -64,9 +66,9 @@ MUZZLE = Vector((0.0, 1.18, 0.06))  # en el espacio del hueso del fusil (Y a lo 
 RIFLE_TEXTURE = 512
 
 # --- parapeto -------------------------------------------------------------------------------------
-# parapeto-meshy.glb mide 1,9 m de largo: dos copias seguidas (la segunda girada para que no se note
-# la repetición), a unos 6,5 m en total, y algo más estiradas en altura para cubrir a un agachado
-PARAPET_SCALE = Vector((1.7, 1.7, 2.6))
+# parapeto-meshy.glb mide 1,9 × 0,66 × 0,39 m: escalado a ~3,3 m de largo (cubre a los 4 soldados),
+# 0,8 m de fondo y 1 m de alto (cubre a un agachado)
+PARAPET_SCALE = Vector((1.75, 1.2, 2.6))
 PARAPET_DECIMATE = 0.5
 
 
@@ -202,15 +204,17 @@ def soldier_keys(side: str, v: str) -> tuple[list[dict], list[tuple[float, float
 
 
 def fall_keys(T: float) -> list[dict]:
-    """Recibe el balazo: se va hacia atrás, se le doblan las rodillas y cae de espaldas."""
+    """Recibe el balazo: el golpe lo echa atrás, se le doblan las rodillas y se desploma de rodillas
+    contra su parapeto, con el fusil caído (cabe en el campo chico: no cae de espaldas)."""
     flung = dict(grip=F(0.12, -0.32, 1.3), d=F(0.3, -0.5, 0.8), up=F(1, 0, 0), lh=F(0.2, 0.35, 1.55))
-    down = dict(pitch=-85, spine=(-5, 0, 0), head=(-10, 20, 0), dz=-0.80)
+    slump = dict(grip=F(0.30, -0.24, 0.30), d=F(0.5, -0.4, -0.75), up=F(1, 0, 0), lh=F(0.32, 0.22, 0.32),
+                 pitch=50, spine=(15, 0, 0), head=(25, 10, 0))
+    kneel = {"l": F(-0.42, 0.14), "r": F(-0.40, -0.14), "lyaw": 0, "ryaw": 0}
     return [
         key(T + 0.12, flung, head=(-20, 0, 0)),
-        key(T + 0.6, flung, dz=-0.35, pitch=-15, head=(-15, 0, 0)),
-        key(T + 1.1, dict(down, grip=F(-0.35, -0.6, 0.95), d=F(0.15, -1, 0.0), up=F(0, 0, 1), lh=F(-0.55, 0.55, 0.95)),
-            feet={"l": F(0.75, 0.16), "r": F(0.80, -0.14), "lyaw": 10, "ryaw": -10}, e="in"),
-        key(T + 1.25, dict(down, dz=-0.79, grip=F(-0.35, -0.6, 0.95), d=F(0.15, -1, 0.0), up=F(0, 0, 1), lh=F(-0.55, 0.55, 0.95))),
+        key(T + 0.55, flung, dz=-0.35, pitch=8, head=(10, 0, 0)),
+        key(T + 1.0, dict(slump, dz=-0.55), feet=kneel, e="in"),
+        key(T + 1.25, dict(slump, dz=-0.57, pitch=55)),
     ]
 
 
@@ -221,9 +225,10 @@ def retreat_keys(T: float) -> list[dict]:
         key(T, PORT),
         key(T + 0.35, PORT, yaw=180, feet={"l": F(0.0, 0.11), "r": F(0.0, -0.11), "lyaw": 0, "ryaw": 0}),
         key(T + 0.55, carry, lh=None, gait=RUN, pitch=12, x=0.0, y=0.0),
-        key(T + 3.3, carry, lh=None, x=0.0, y=8.0, e="lin"),
-        key(T + 2.95, carry, lh=None, scale=1.0),
-        key(T + 3.25, carry, lh=None, scale=0.001),  # 0 exacto deja una matriz degenerada
+        # Unos pocos metros (el campo es chico) y desaparece
+        key(T + 1.95, carry, lh=None, x=0.0, y=3.0, e="lin"),
+        key(T + 1.6, carry, lh=None, scale=1.0),
+        key(T + 1.9, carry, lh=None, scale=0.001),  # 0 exacto deja una matriz degenerada
     ]
 
 
@@ -382,19 +387,9 @@ def build_parapet() -> bpy.types.Object:
     lo = Vector((min(v.x for v in vs), min(v.y for v in vs), min(v.z for v in vs)))
     hi = Vector((max(v.x for v in vs), max(v.y for v in vs), max(v.z for v in vs)))
     center = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
-    length = (hi.x - lo.x) * PARAPET_SCALE.x
     # Centrado, apoyado en el piso, escalado y con el largo sobre Y (= Z de la app, a lo largo del campo)
-    base = Matrix.Rotation(math.radians(90), 4, "Z") @ Matrix.Diagonal((*PARAPET_SCALE, 1)) @ Matrix.Translation(-center)
-    copy = obj.copy()
-    copy.data = obj.data.copy()
-    bpy.context.scene.collection.objects.link(copy)
-    obj.data.transform(Matrix.Translation((0, -length / 2, 0)) @ base)
-    copy.data.transform(Matrix.Translation((0, length / 2, 0)) @ Matrix.Rotation(math.pi, 4, "Z") @ base)
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    copy.select_set(True)
+    obj.data.transform(Matrix.Rotation(math.radians(90), 4, "Z") @ Matrix.Diagonal((*PARAPET_SCALE, 1)) @ Matrix.Translation(-center))
     bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.join()
     dec = obj.modifiers.new("decimate", "DECIMATE")
     dec.ratio = PARAPET_DECIMATE
     bpy.ops.object.modifier_apply(modifier=dec.name)
@@ -519,7 +514,7 @@ def preview(folder: str, video: bool, soldiers: dict, parapet: bpy.types.Object,
 
     cams = {
         # Todo el campo, desde atrás y arriba del usuario (él lo ve girando la cabeza a cada lado)
-        "general": (Vector((0, -10, 4.5)), Vector((0, 0, 0.8)), 20),
+        "general": (Vector((0, -6.5, 3.2)), Vector((0, 0, 0.7)), 20),
         # De costado y cerca de cada bando, para revisar las posturas
         "patriotas": (Vector((-SOLDIER_X + 1.2, -3.4, 1.3)), Vector((-SOLDIER_X + 0.4, 0, 0.95)), 30),
         "realistas": (Vector((SOLDIER_X - 1.2, -3.4, 1.3)), Vector((SOLDIER_X - 0.4, 0, 0.95)), 30),
