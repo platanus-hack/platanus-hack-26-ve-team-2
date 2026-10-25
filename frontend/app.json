@@ -10,6 +10,8 @@
     "ios": {
       "icon": "./assets/images/icon-ios.png",
       "bundleIdentifier": "com.arvi.app",
+      "version": "1.1.0",
+      "buildNumber": "2",
       "appleTeamId": "MYV6MKFDJ5",
       "config": {
         "usesNonExemptEncryption": false
