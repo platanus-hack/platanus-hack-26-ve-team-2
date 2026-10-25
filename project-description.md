@@ -40,7 +40,13 @@ Cada personaje se define con su personalidad, su voz, su contexto y los lugares 
 - **App:** Expo (React Native, TypeScript), expo-router, ViroReact (ARCore/ARKit), Google Maps.
 - **Backend:** FastAPI con WebSockets, PostgreSQL + PostGIS, SQLAlchemy y Alembic.
 - **IA:** Claude (conversación en streaming, visión y búsqueda web para verificar datos) y ElevenLabs (transcripción y voz), detrás de una capa de proveedores intercambiables.
-- **3D:** modelos y animaciones de batalla horneados con scripts de Blender.
+- **3D:** un pipeline estandarizado para crear personajes en horas, no semanas:
+  1. **Imagen base con Nano Banana:** generamos el concept del personaje con prompts estandarizados (pose, encuadre y estilo consistentes) para que sirvan como entrada limpia al modelado.
+  2. **Modelo en Meshy:** a partir de esa imagen, Meshy genera el modelo 3D, la textura, el rig con esqueleto y las animaciones base.
+  3. **Ajustes en Blender automatizados con Claude Code:** Claude Code usa la CLI de Blender para correr scripts que corrigen y mejoran cada modelo y animación (escala, orientación, limpieza de huesos, combinar y hornear animaciones, coreografías de batalla) y exportan el resultado listo para la app.
+  4. **Compresión para móvil:** como ViroReact no soporta Draco, combinamos dos vías para que las escenas carguen rápido en el teléfono:
+     - **Personajes con [glTF Report](https://gltf.report/):** optimizamos y comprimimos cada personaje con glTF Report antes de llevarlo a la app.
+     - **Scripts de Blender:** los mismos scripts reducen polígonos con decimación en la escenografía, bajan las texturas de los accesorios a 512 px y exportan las texturas en JPEG (calidad 85) dentro de un único `.glb` por modelo.
 
 ## Equipo
 
