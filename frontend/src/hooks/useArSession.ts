@@ -53,7 +53,7 @@ export type ArSessionState = {
    * colocación. Se fija frente al usuario al empezar; null hasta entonces
    */
   field: { x: number; z: number; yaw: number } | null;
-  /** Disparos (y otros sonidos con posición) que están sonando en el campo: la escena los dibuja */
+  /** Disparos recientes en el campo: la escena dibuja su fogonazo y su humo */
   firing: FieldShot[];
   /** Si el anfitrión camina detrás del usuario cuando se aleja (si no, solo se gira para mirarlo) */
   follow: boolean;

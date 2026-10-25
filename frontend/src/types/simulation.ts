@@ -62,7 +62,7 @@ export interface VoiceCue {
 export interface SoundCue {
   atMs: number;
   sound: string;
-  /** Solo en el campo: de dónde sale el sonido (marco del campo); suena espacial, desde ese punto */
+  /** Solo en el campo: dónde ocurre (marco del campo), para dibujar el efecto ahí */
   at?: Vec3;
   /** Soplo de humo en `at` (el disparo de un fusil) */
   effect?: "humo";

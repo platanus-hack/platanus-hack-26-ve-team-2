@@ -9,7 +9,6 @@ import {
   ViroParticleEmitter,
   ViroPolygon,
   ViroQuad,
-  ViroSpatialSound,
   ViroSphere,
   ViroSpotLight,
   ViroTrackingStateConstants,
@@ -186,6 +185,11 @@ export function VistaARScene() {
   // Coreografía de campo: todo salvo el anfitrión va en el marco del campo; el anfitrión sigue libre
   const fieldLayout = choreography?.layout === "field";
   const inField = (obj: SceneObject) => fieldLayout && obj.id !== hostId;
+  // Copias del campo ya cargadas (por id), en el marco del campo actual
+  const [fieldLoaded, setFieldLoaded] = useState<{ field: ArSessionState["field"]; ids: Set<string> }>({
+    field: null,
+    ids: new Set(),
+  });
   // La coreografía en escenario (la batalla) maneja también al anfitrión
   const stageBattle = battle !== "off" && !fieldLayout;
   // Si llega caminando, su entrada ya define dónde queda: ese no sigue al usuario. En la batalla
@@ -755,7 +759,7 @@ export function VistaARScene() {
                 shadowNearZ={1}
                 shadowFarZ={30}
               />
-              {objects.filter(inField).map((obj) => (
+              {mountable(objects.filter(inField), fieldLoaded.field === field ? fieldLoaded.ids : new Set()).map((obj) => (
                 <SceneModel
                   key={obj.id}
                   obj={obj}
@@ -765,10 +769,16 @@ export function VistaARScene() {
                   size={size}
                   battle={battle}
                   battleAnimation={(obj.kind === "dynamic" && obj.choreographyAnimation) || choreography?.animation}
+                  onLoaded={() =>
+                    setFieldLoaded((prev) => ({
+                      field,
+                      ids: new Set([...(prev.field === field ? prev.ids : []), obj.id]),
+                    }))
+                  }
                 />
               ))}
               {firing.map((shot) => (
-                <FieldShotEffect key={shot.id} shot={shot} source={choreography?.sounds[shot.sound]} />
+                <FieldShotEffect key={shot.id} shot={shot} />
               ))}
               {battle === "finished" && <Balloons />}
               <ViroQuad rotation={[-90, 0, 0]} width={FIELD_SHADOW[0]} height={FIELD_SHADOW[1]} arShadowReceiver />
@@ -825,6 +835,8 @@ type SceneModelProps = {
   battleAnimation?: string;
   /** Personaje de otra simulación: se carga oculto para que aparezca al instante al cambiar */
   preloadOnly?: boolean;
+  /** Terminó de cargar el modelo (o falló): con eso se monta la siguiente copia del mismo GLB */
+  onLoaded?: () => void;
 };
 
 function SceneModel({
@@ -836,6 +848,7 @@ function SceneModel({
   battle = "off",
   battleAnimation,
   preloadOnly = false,
+  onLoaded,
 }: SceneModelProps) {
   const entrance = obj.kind === "dynamic" ? obj.entrance : undefined;
   const [loaded, setLoaded] = useState(false);
@@ -899,6 +912,7 @@ function SceneModel({
           // Empieza a caminar recién cuando el modelo está listo, si no llegaría ya a mitad de camino
           setLoaded(true);
           arSession.markLoaded(obj.id);
+          onLoaded?.();
           if (!isHost) return;
           // Para el lipsync: el modelo tiene que traer la shape key "boca_abierta"
           if (__DEV__)
@@ -911,6 +925,7 @@ function SceneModel({
         }}
         onError={(event) => {
           console.warn("[AR] error cargando modelo", obj.id, event?.nativeEvent ?? event);
+          onLoaded?.();
           if (isHost) arSession.set({ modelStatus: "error" });
         }}
       />
@@ -919,10 +934,10 @@ function SceneModel({
 }
 
 /**
- * Un disparo en el campo: suena desde la boca del fusil (sonido espacial: se oye de qué lado viene),
- * con un fogonazo breve y una bocanada de humo que sale hacia el otro bando. Gritos y caídas solo suenan.
+ * Un disparo en el campo: un fogonazo breve en la boca del fusil y una bocanada de humo que sale hacia
+ * el otro bando. El sonido lo toca useBattleDirector (ViroSpatialSound se cae en iOS al montarse)
  */
-function FieldShotEffect({ shot, source }: { shot: FieldShot; source?: number }) {
+function FieldShotEffect({ shot }: { shot: FieldShot }) {
   const [flash, setFlash] = useState(shot.effect === "humo");
   useEffect(() => {
     const timer = setTimeout(() => setFlash(false), FLASH_MS);
@@ -932,9 +947,6 @@ function FieldShotEffect({ shot, source }: { shot: FieldShot; source?: number })
   const dir = shot.at[0] > 0 ? -1 : 1;
   return (
     <ViroNode position={shot.at}>
-      {source !== undefined && (
-        <ViroSpatialSound source={source} position={[0, 0, 0]} rolloffModel="Logarithmic" minDistance={2} maxDistance={40} />
-      )}
       {flash && <ViroSphere radius={0.09} position={[dir * 0.1, 0, 0]} materials={["fogonazo"]} />}
       {shot.effect === "humo" && (
         <ViroParticleEmitter
@@ -972,6 +984,16 @@ function FieldShotEffect({ shot, source }: { shot: FieldShot; source?: number })
       )}
     </ViroNode>
   );
+}
+
+/**
+ * Objetos que ya se pueden montar: cada uno espera a que carguen las copias anteriores del mismo GLB.
+ * En el APK, Viro copia el modelo empaquetado a un archivo de caché por cada Viro3DObject que lo carga,
+ * siempre al mismo archivo: varias copias a la vez se pisan el archivo mientras otra lo lee y la app se
+ * cae (abort en VROPlatformRunTask). Modelos distintos sí cargan en paralelo
+ */
+function mountable(list: SceneObject[], loaded: Set<string>): SceneObject[] {
+  return list.filter((obj, i) => list.slice(0, i).every((prev) => prev.model !== obj.model || loaded.has(prev.id)));
 }
 
 /** El mismo objeto sin posición en el piso ni giro en Y: los pone el nodo que lo contiene. */
