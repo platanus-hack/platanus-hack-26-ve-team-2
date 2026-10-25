@@ -21,6 +21,7 @@ import { Dimensions, PixelRatio } from "react-native";
 
 import smoke from "@/assets/images/effects/humo.png";
 import { Balloons } from "@/components/ar/Balloons";
+import { mountable } from "@/components/ar/loadQueue";
 import {
   arSession,
   type ArSessionState,
@@ -788,7 +789,7 @@ export function VistaARScene() {
                 shadowNearZ={1}
                 shadowFarZ={30}
               />
-              {mountable(objects.filter(inField), fieldLoaded.field === field ? fieldLoaded.ids : new Set()).map((obj) => (
+              {mountable(objects.filter(inField), (obj) => fieldLoaded.field === field && fieldLoaded.ids.has(obj.id)).map((obj) => (
                 <SceneModel
                   key={obj.id}
                   obj={obj}
@@ -1023,16 +1024,6 @@ function FieldShotEffect({ shot }: { shot: FieldShot }) {
       )}
     </ViroNode>
   );
-}
-
-/**
- * Objetos que ya se pueden montar: cada uno espera a que carguen las copias anteriores del mismo GLB.
- * En el APK, Viro copia el modelo empaquetado a un archivo de caché por cada Viro3DObject que lo carga,
- * siempre al mismo archivo: varias copias a la vez se pisan el archivo mientras otra lo lee y la app se
- * cae (abort en VROPlatformRunTask). Modelos distintos sí cargan en paralelo
- */
-function mountable(list: SceneObject[], loaded: Set<string>): SceneObject[] {
-  return list.filter((obj, i) => list.slice(0, i).every((prev) => prev.model !== obj.model || loaded.has(prev.id)));
 }
 
 /** El mismo objeto sin posición en el piso ni giro en Y: los pone el nodo que lo contiene. */
