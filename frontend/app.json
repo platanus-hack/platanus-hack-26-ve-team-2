@@ -8,7 +8,7 @@
     "scheme": "platanusar",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/images/icon-ios.png",
       "bundleIdentifier": "com.arvi.app",
       "appleTeamId": "MYV6MKFDJ5",
       "config": {
