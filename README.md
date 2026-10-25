@@ -1,6 +1,6 @@
-# VISTA
+# Arvi
 
-<img src="./project-logo.png" alt="VISTA" width="200" />
+<img src="./project-logo.png" alt="Arvi" width="200" />
 
 **Un guía turístico con IA en tu bolsillo: llegas a un lugar, apuntas la cámara y la historia aparece frente a ti para conversar contigo.**
 
